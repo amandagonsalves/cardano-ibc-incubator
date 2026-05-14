@@ -18,11 +18,9 @@ import {
   MsgChannelOpenTry,
   MsgChannelOpenTryResponse,
 } from '@plus/proto-types/build/ibc/core/channel/v1/tx';
-import { HandlerDatum } from 'src/shared/types/handler-datum';
 import { HostStateDatum } from 'src/shared/types/host-state-datum';
 import { parseClientSequence, parseConnectionSequence } from 'src/shared/helpers/sequence';
 import { ConnectionDatum } from 'src/shared/types/connection/connection-datum';
-import { HandlerOperator } from 'src/shared/types/handler-operator';
 import { MintChannelRedeemer, SpendChannelRedeemer } from 'src/shared/types/channel/channel-redeemer';
 import { ConfigService } from '@nestjs/config';
 import { AuthToken } from 'src/shared/types/auth-token';
@@ -30,8 +28,6 @@ import { ChannelDatum, encodeChannelEndValue } from 'src/shared/types/channel/ch
 import { ChannelState } from 'src/shared/types/channel/state';
 import { CHANNEL_ID_PREFIX } from 'src/constant';
 import { IBCModuleRedeemer } from '@shared/types/port/ibc_module_redeemer';
-import { MockModuleDatum } from '@shared/types/apps/mock/mock-module-datum';
-import { insertSortMap } from '../shared/helpers/helper';
 import { convertHex2String, convertString2Hex, toHex } from '@shared/helpers/hex';
 import { sumLovelaceFromUtxos } from './helper/helper';
 import { ClientDatum } from '@shared/types/client-datum';
@@ -78,6 +74,7 @@ import {
 } from '../shared/helpers/ibc-state-root';
 import { PendingTreeUpdate } from '../shared/services/ibc-tree-pending-updates.service';
 import { TxOperationRunnerService } from './tx-operation-runner.service';
+import { getGatewayModuleConfigForPortId } from '@shared/helpers/module-port';
 
 @Injectable()
 export class ChannelService {
@@ -203,6 +200,10 @@ export class ChannelService {
     }
   }
 
+  private getModuleConfig(portId: string) {
+    return getGatewayModuleConfigForPortId(this.configService.get('deployment'), portId);
+  }
+
   async channelOpenInit(data: MsgChannelOpenInit): Promise<MsgChannelOpenInitResponse> {
     try {
       this.logger.log('Channel Open Init is processing');
@@ -260,7 +261,7 @@ export class ChannelService {
       } as unknown as MsgChannelOpenInitResponse;
       return response;
     } catch (error) {
-      let throwError: Error = error as Error;
+      const throwError: Error = error as Error;
       this.logger.error(`channelOpenInit: ${throwError.name} - ${throwError.message}`, throwError.stack);
       if (!(error instanceof RpcException)) {
         throw new GrpcInternalException(`An unexpected error occurred. ${error}`);
@@ -534,14 +535,6 @@ export class ChannelService {
     // Ensure the in-memory Merkle tree is aligned with on-chain state before computing witnesses.
     await this.ensureTreeAligned(hostStateDatum.state.ibc_state_root);
 
-    const handlerUtxo: UTxO = await this.lucidService.findUtxoAtHandlerAuthToken();
-    const handlerDatum: HandlerDatum = await this.lucidService.decodeDatum<HandlerDatum>(handlerUtxo.datum!, 'handler');
-    if (handlerDatum.state.next_channel_sequence !== hostStateDatum.state.next_channel_sequence) {
-      throw new GrpcInternalException(
-        `Handler/HostState channel sequence mismatch: handler=${handlerDatum.state.next_channel_sequence}, hostState=${hostStateDatum.state.next_channel_sequence}`,
-      );
-    }
-
     const [mintConnectionPolicyId, connectionTokenName] = this.lucidService.getConnectionTokenUnit(
       parseConnectionSequence(channelOpenInitOperator.connectionId),
     );
@@ -556,20 +549,11 @@ export class ChannelService {
     // Get the token unit associated with the client
     const clientTokenUnit = this.lucidService.getClientTokenUnit(connectionClientSequence);
     const clientUtxo = await this.lucidService.findUtxoByUnit(clientTokenUnit);
-    const spendHandlerRedeemer: HandlerOperator = 'HandlerChanOpenInit';
-    const encodedSpendHandlerRedeemer: string = await this.lucidService.encode<HandlerOperator>(
-      spendHandlerRedeemer,
-      'handlerOperator',
-    );
 
     // Derive the new channel identifier from the HostState sequence.
     const channelSequence = hostStateDatum.state.next_channel_sequence;
     const channelId = `channel-${channelSequence}`;
-    const mintChannelRedeemer: MintChannelRedeemer = {
-      ChanOpenInit: {
-        handler_token: this.configService.get('deployment').handlerAuthToken,
-      },
-    };
+    const mintChannelRedeemer: MintChannelRedeemer = 'ChanOpenInit';
     const channelIdHex = convertString2Hex(CHANNEL_ID_PREFIX + '-' + channelSequence);
 
     const [mintChannelPolicyId, channelTokenName] = this.lucidService.getChannelTokenUnit(channelSequence);
@@ -615,15 +599,6 @@ export class ChannelService {
       channelDatum,
     );
 
-    const updatedHandlerDatum: HandlerDatum = {
-      ...handlerDatum,
-      state: {
-        ...handlerDatum.state,
-        next_channel_sequence: hostStateDatum.state.next_channel_sequence + 1n,
-        ibc_state_root: newRoot,
-      },
-    };
-
     const updatedHostStateDatum: HostStateDatum = {
       ...hostStateDatum,
       state: {
@@ -648,12 +623,11 @@ export class ChannelService {
       'mintChannelRedeemer',
     );
     const encodedHostStateRedeemer: string = await this.lucidService.encode(hostStateRedeemer, 'host_state_redeemer');
-    const encodedUpdatedHandlerDatum: string = await this.lucidService.encode(updatedHandlerDatum, 'handler');
     const encodedUpdatedHostStateDatum: string = await this.lucidService.encode(updatedHostStateDatum, 'host_state');
     const encodedChannelDatum: string = await this.lucidService.encode<ChannelDatum>(channelDatum, 'channel');
-    const transferModuleIdentifier = this.configService.get('deployment').modules.transfer.identifier;
-    const transferModuleUtxo = await this.lucidService.findUtxoByUnit(transferModuleIdentifier);
-    const spendTransferModuleRedeemer: IBCModuleRedeemer = {
+    const moduleConfig = this.getModuleConfig(channelOpenInitOperator.port_id);
+    const moduleUtxo = await this.lucidService.findUtxoByUnit(moduleConfig.identifier);
+    const spendModuleRedeemer: IBCModuleRedeemer = {
       Callback: [
         {
           OnChanOpenInit: {
@@ -662,22 +636,20 @@ export class ChannelService {
         },
       ],
     };
-    const encodedSpendTransferModuleRedeemer: string = await this.lucidService.encode(
-      spendTransferModuleRedeemer,
+    const encodedSpendModuleRedeemer: string = await this.lucidService.encode(
+      spendModuleRedeemer,
       'iBCModuleRedeemer',
     );
     const unsignedChannelOpenInitParams: UnsignedChannelOpenInitDto = {
       hostStateUtxo,
       encodedHostStateRedeemer,
-      handlerUtxo,
       connectionUtxo,
       clientUtxo,
-      transferModuleUtxo,
-      encodedSpendTransferModuleRedeemer,
-      encodedSpendHandlerRedeemer,
+      moduleKey: moduleConfig.key,
+      moduleUtxo,
+      encodedSpendModuleRedeemer,
       encodedMintChannelRedeemer,
       channelTokenUnit,
-      encodedUpdatedHandlerDatum,
       encodedUpdatedHostStateDatum,
       encodedChannelDatum,
       constructedAddress,
@@ -693,7 +665,7 @@ export class ChannelService {
   /* istanbul ignore next */
   async buildUnsignedChannelOpenTryTx(
     channelOpenTryOperator: ChannelOpenTryOperator,
-    constructedAddress: string,
+    _constructedAddress: string,
   ): Promise<TxBuilder> {
     // STT Architecture: Query the HostState UTXO via its unique NFT.
     const hostStateUtxo: UTxO = await this.lucidService.findUtxoAtHostStateNFT();
@@ -707,14 +679,6 @@ export class ChannelService {
 
     // Ensure the in-memory Merkle tree is aligned with on-chain state before computing witnesses.
     await this.ensureTreeAligned(hostStateDatum.state.ibc_state_root);
-
-    const handlerUtxo: UTxO = await this.lucidService.findUtxoAtHandlerAuthToken();
-    const handlerDatum: HandlerDatum = await this.lucidService.decodeDatum<HandlerDatum>(handlerUtxo.datum!, 'handler');
-    if (handlerDatum.state.next_channel_sequence !== hostStateDatum.state.next_channel_sequence) {
-      throw new GrpcInternalException(
-        `Handler/HostState channel sequence mismatch: handler=${handlerDatum.state.next_channel_sequence}, hostState=${hostStateDatum.state.next_channel_sequence}`,
-      );
-    }
 
     const [mintConnectionPolicyId, connectionTokenName] = this.lucidService.getConnectionTokenUnit(
       parseConnectionSequence(channelOpenTryOperator.connectionId),
@@ -730,18 +694,12 @@ export class ChannelService {
     // Get the token unit associated with the client
     const clientTokenUnit = this.lucidService.getClientTokenUnit(connectionClientSequence);
     const clientUtxo = await this.lucidService.findUtxoByUnit(clientTokenUnit);
-    const spendHandlerRedeemer: HandlerOperator = 'HandlerChanOpenTry';
-    const encodedSpendHandlerRedeemer: string = await this.lucidService.encode<HandlerOperator>(
-      spendHandlerRedeemer,
-      'handlerOperator',
-    );
 
     // Derive the new channel identifier from the HostState sequence.
     const channelSequence = hostStateDatum.state.next_channel_sequence;
     const channelId = `channel-${channelSequence}`;
     const mintChannelRedeemer: MintChannelRedeemer = {
       ChanOpenTry: {
-        handler_token: this.configService.get('deployment').handlerAuthToken,
         counterparty_version: convertString2Hex(channelOpenTryOperator.counterpartyVersion),
         //TODO
         proof_init: channelOpenTryOperator.proofInit,
@@ -787,15 +745,6 @@ export class ChannelService {
         channelDatum,
       );
 
-    const updatedHandlerDatum: HandlerDatum = {
-      ...handlerDatum,
-      state: {
-        ...handlerDatum.state,
-        next_channel_sequence: hostStateDatum.state.next_channel_sequence + 1n,
-        ibc_state_root: newRoot,
-      },
-    };
-
     const updatedHostStateDatum: HostStateDatum = {
       ...hostStateDatum,
       state: {
@@ -821,14 +770,12 @@ export class ChannelService {
       'mintChannelRedeemer',
     );
     const encodedHostStateRedeemer: string = await this.lucidService.encode(hostStateRedeemer, 'host_state_redeemer');
-    const encodedUpdatedHandlerDatum: string = await this.lucidService.encode(updatedHandlerDatum, 'handler');
     const encodedUpdatedHostStateDatum: string = await this.lucidService.encode(updatedHostStateDatum, 'host_state');
     const encodedChannelDatum: string = await this.lucidService.encode<ChannelDatum>(channelDatum, 'channel');
-    const mockModuleIdentifier = this.configService.get('deployment').modules.mock.identifier;
-    // Get mock module utxo
-    const mockModuleUtxo = await this.lucidService.findUtxoByUnit(mockModuleIdentifier);
+    const moduleConfig = this.getModuleConfig(channelOpenTryOperator.port_id);
+    const moduleUtxo = await this.lucidService.findUtxoByUnit(moduleConfig.identifier);
     const channelIdHex = convertString2Hex(CHANNEL_ID_PREFIX + '-' + channelSequence.toString());
-    const spendMockModuleRedeemer: IBCModuleRedeemer = {
+    const spendModuleRedeemer: IBCModuleRedeemer = {
       Callback: [
         {
           OnChanOpenTry: {
@@ -837,42 +784,23 @@ export class ChannelService {
         },
       ],
     };
-    const encodedSpendMockModuleRedeemer: string = await this.lucidService.encode(
-      spendMockModuleRedeemer,
+    const encodedSpendModuleRedeemer: string = await this.lucidService.encode(
+      spendModuleRedeemer,
       'iBCModuleRedeemer',
     );
-    const currentMockModuleDatum = await this.lucidService.decodeDatum<MockModuleDatum>(
-      mockModuleUtxo.datum!,
-      'mockModule',
-    );
-    const newMockModuleDatum: MockModuleDatum = {
-      ...currentMockModuleDatum,
-      opened_channels: insertSortMap(currentMockModuleDatum.opened_channels, channelId, true),
-    };
-
-    const encodedNewMockModuleDatum: string = await this.lucidService.encode<MockModuleDatum>(
-      newMockModuleDatum,
-      'mockModule',
-    );
-
-    // Call createUnsignedChannelOpenTryTransaction method with defined parameters
-    return this.lucidService.createUnsignedChannelOpenTryTransaction(
-      handlerUtxo,
+    return this.lucidService.createUnsignedChannelOpenTryTransaction({
+      moduleKey: moduleConfig.key,
       hostStateUtxo,
       encodedHostStateRedeemer,
       connectionUtxo,
       clientUtxo,
-      mockModuleUtxo,
-      encodedSpendMockModuleRedeemer,
-      encodedSpendHandlerRedeemer,
+      moduleUtxo,
+      encodedSpendModuleRedeemer,
       encodedMintChannelRedeemer,
       channelTokenUnit,
-      encodedUpdatedHandlerDatum,
       encodedUpdatedHostStateDatum,
       encodedChannelDatum,
-      encodedNewMockModuleDatum,
-      constructedAddress,
-    );
+    });
   }
   async buildUnsignedChannelOpenAckTx(
     channelOpenAckOperator: ChannelOpenAckOperator,
@@ -1026,7 +954,10 @@ export class ChannelService {
         channel_id: `${CHANNEL_ID_PREFIX}-${channelOpenAckOperator.channelSequence}`,
       },
       connection_hops: [convertHex2String(connectionDatum.state.counterparty.connection_id)],
-      version: convertHex2String(channelDatum.state.channel.version),
+      // The proof is over the counterparty chain's TryOpen channel end, so the
+      // committed version is the counterparty_version supplied in MsgChannelOpenAck,
+      // not our local channel version.
+      version: channelOpenAckOperator.counterpartyVersion,
     };
 
     const verifyProofRedeemer: VerifyProofRedeemer = {
@@ -1057,10 +988,10 @@ export class ChannelService {
       this.lucidService.LucidImporter,
     );
 
-    const transferModuleIdentifier = this.configService.get('deployment').modules.transfer.identifier;
-    const transferModuleUtxo = await this.lucidService.findUtxoByUnit(transferModuleIdentifier);
+    const moduleConfig = this.getModuleConfig(portId);
+    const moduleUtxo = await this.lucidService.findUtxoByUnit(moduleConfig.identifier);
 
-    const spendTransferModuleRedeemer: IBCModuleRedeemer = {
+    const spendModuleRedeemer: IBCModuleRedeemer = {
       Callback: [
         {
           OnChanOpenAck: {
@@ -1069,8 +1000,8 @@ export class ChannelService {
         },
       ],
     };
-    const encodedSpendTransferModuleRedeemer: string = await this.lucidService.encode(
-      spendTransferModuleRedeemer,
+    const encodedSpendModuleRedeemer: string = await this.lucidService.encode(
+      spendModuleRedeemer,
       'iBCModuleRedeemer',
     );
     const unsignedChannelOpenAckParams: UnsignedChannelOpenAckDto = {
@@ -1080,9 +1011,10 @@ export class ChannelService {
       channelUtxo,
       connectionUtxo,
       clientUtxo,
-      transferModuleUtxo,
+      moduleKey: moduleConfig.key,
+      moduleUtxo,
       encodedSpendChannelRedeemer,
-      encodedSpendTransferModuleRedeemer,
+      encodedSpendModuleRedeemer,
       channelTokenUnit,
       encodedUpdatedChannelDatum,
       constructedAddress,
@@ -1268,11 +1200,10 @@ export class ChannelService {
       verifyProofRedeemer,
       this.lucidService.LucidImporter,
     );
-    const mockModuleIdentifier = this.configService.get('deployment').modules.mock.identifier;
-
-    const mockModuleUtxo = await this.lucidService.findUtxoByUnit(mockModuleIdentifier);
+    const moduleConfig = this.getModuleConfig(portId);
+    const moduleUtxo = await this.lucidService.findUtxoByUnit(moduleConfig.identifier);
     const channelId = convertString2Hex(CHANNEL_ID_PREFIX + '-' + channelOpenConfirmOperator.channelSequence);
-    const spendMockModuleRedeemer: IBCModuleRedeemer = {
+    const spendModuleRedeemer: IBCModuleRedeemer = {
       Callback: [
         {
           OnChanOpenConfirm: {
@@ -1281,18 +1212,9 @@ export class ChannelService {
         },
       ],
     };
-    const encodedSpendMockModuleRedeemer: string = await this.lucidService.encode(
-      spendMockModuleRedeemer,
+    const encodedSpendModuleRedeemer: string = await this.lucidService.encode(
+      spendModuleRedeemer,
       'iBCModuleRedeemer',
-    );
-    const currentMockModuleDatum = await this.lucidService.decodeDatum<MockModuleDatum>(
-      mockModuleUtxo.datum!,
-      'mockModule',
-    );
-    const newMockModuleDatum: MockModuleDatum = currentMockModuleDatum;
-    const encodedNewMockModuleDatum: string = await this.lucidService.encode<MockModuleDatum>(
-      newMockModuleDatum,
-      'mockModule',
     );
     const unsignedChannelOpenConfirmParams: UnsignedChannelOpenConfirmDto = {
       hostStateUtxo,
@@ -1301,12 +1223,12 @@ export class ChannelService {
       channelUtxo,
       connectionUtxo,
       clientUtxo,
-      mockModuleUtxo,
+      moduleKey: moduleConfig.key,
+      moduleUtxo,
       encodedSpendChannelRedeemer,
-      encodedSpendMockModuleRedeemer,
+      encodedSpendModuleRedeemer,
       channelTokenUnit,
       encodedUpdatedChannelDatum,
-      encodedNewMockModuleDatum,
       constructedAddress,
       chanOpenConfirmPolicyId,
       channelToken,
@@ -1419,11 +1341,10 @@ export class ChannelService {
 
     const deploymentConfig = this.configService.get('deployment');
     const channelCloseInitPolicyId = deploymentConfig.validators.spendChannel.refValidator.chan_close_init.scriptHash;
-    const mockModuleIdentifier = deploymentConfig.modules.mock.identifier;
+    const moduleConfig = this.getModuleConfig(portId);
+    const moduleUtxo = await this.lucidService.findUtxoByUnit(moduleConfig.identifier);
 
-    const mockModuleUtxo = await this.lucidService.findUtxoByUnit(mockModuleIdentifier);
-
-    const spendMockModuleRedeemer: IBCModuleRedeemer = {
+    const spendModuleRedeemer: IBCModuleRedeemer = {
       Callback: [
         {
           OnChanCloseInit: {
@@ -1433,8 +1354,8 @@ export class ChannelService {
       ],
     };
 
-    const encodedSpendMockModuleRedeemer: string = await this.lucidService.encode(
-      spendMockModuleRedeemer,
+    const encodedSpendModuleRedeemer: string = await this.lucidService.encode(
+      spendModuleRedeemer,
       'iBCModuleRedeemer',
     );
 
@@ -1451,10 +1372,11 @@ export class ChannelService {
       channelUtxo,
       connectionUtxo,
       clientUtxo,
-      mockModuleUtxo,
+      moduleKey: moduleConfig.key,
+      moduleUtxo,
       channelCloseInitPolicyId,
       encodedSpendChannelRedeemer,
-      encodedSpendMockModuleRedeemer,
+      encodedSpendModuleRedeemer,
       channelTokenUnit,
       channelToken,
       encodedUpdatedChannelDatum,
@@ -1618,10 +1540,10 @@ export class ChannelService {
       this.lucidService.LucidImporter,
     );
 
-    const mockModuleIdentifier = this.configService.get('deployment').modules.mock.identifier;
-    const mockModuleUtxo = await this.lucidService.findUtxoByUnit(mockModuleIdentifier);
+    const moduleConfig = this.getModuleConfig(portId);
+    const moduleUtxo = await this.lucidService.findUtxoByUnit(moduleConfig.identifier);
     const channelId = convertString2Hex(CHANNEL_ID_PREFIX + '-' + channelCloseConfirmOperator.channelSequence);
-    const spendMockModuleRedeemer: IBCModuleRedeemer = {
+    const spendModuleRedeemer: IBCModuleRedeemer = {
       Callback: [
         {
           // Mirror the current on-chain validator expectation literally.
@@ -1631,18 +1553,9 @@ export class ChannelService {
         },
       ],
     };
-    const encodedSpendMockModuleRedeemer: string = await this.lucidService.encode(
-      spendMockModuleRedeemer,
+    const encodedSpendModuleRedeemer: string = await this.lucidService.encode(
+      spendModuleRedeemer,
       'iBCModuleRedeemer',
-    );
-    const currentMockModuleDatum = await this.lucidService.decodeDatum<MockModuleDatum>(
-      mockModuleUtxo.datum!,
-      'mockModule',
-    );
-    const newMockModuleDatum: MockModuleDatum = currentMockModuleDatum;
-    const encodedNewMockModuleDatum: string = await this.lucidService.encode<MockModuleDatum>(
-      newMockModuleDatum,
-      'mockModule',
     );
 
     const unsignedChannelCloseConfirmParams: UnsignedChannelCloseConfirmDto = {
@@ -1652,13 +1565,13 @@ export class ChannelService {
       channelUtxo,
       connectionUtxo,
       clientUtxo,
-      mockModuleUtxo,
+      moduleKey: moduleConfig.key,
+      moduleUtxo,
       encodedSpendChannelRedeemer,
-      encodedSpendMockModuleRedeemer,
+      encodedSpendModuleRedeemer,
       channelTokenUnit,
       channelToken,
       encodedUpdatedChannelDatum,
-      encodedNewMockModuleDatum,
       constructedAddress,
       channelCloseConfirmPolicyId,
       verifyProofPolicyId,

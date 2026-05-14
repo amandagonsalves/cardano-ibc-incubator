@@ -4,16 +4,33 @@ import { Any } from "../../../../google/protobuf/any";
 import { BinaryReader, BinaryWriter } from "../../../../binary";
 import { isSet, DeepPartial, Exact, Rpc } from "../../../../helpers";
 export const protobufPackage = "ibc.core.types.v1";
-/** QueryBlockResultsRequest is the request type for the Query/BlockResults RPC method. */
+/**
+ * QueryBlockResultsRequest is the request type for the Query/BlockResults RPC method.
+ * @name QueryBlockResultsRequest
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryBlockResultsRequest
+ */
 export interface QueryBlockResultsRequest {
   height: bigint;
 }
-/** QueryBlockResultsResponse is the response type for the Query/BlockResults RPC method. */
+/**
+ * QueryBlockResultsResponse is the response type for the Query/BlockResults RPC method.
+ * @name QueryBlockResultsResponse
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryBlockResultsResponse
+ */
 export interface QueryBlockResultsResponse {
-  /** params defines the parameters of the module. */
+  /**
+   * params defines the parameters of the module.
+   */
   block_results?: ResultBlockResults;
 }
-/** QueryBlockSearchRequest is the request type for the Query/BlockSearch RPC method. */
+/**
+ * QueryBlockSearchRequest is the request type for the Query/BlockSearch RPC method.
+ * @name QueryBlockSearchRequest
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryBlockSearchRequest
+ */
 export interface QueryBlockSearchRequest {
   packet_src_channel?: string;
   packet_dst_channel?: string;
@@ -21,28 +38,60 @@ export interface QueryBlockSearchRequest {
   limit: bigint;
   page: bigint;
 }
-/** QueryBlockSearchResponse is the response type for the Query/BlockSearch RPC method. */
+/**
+ * QueryBlockSearchResponse is the response type for the Query/BlockSearch RPC method.
+ * @name QueryBlockSearchResponse
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryBlockSearchResponse
+ */
 export interface QueryBlockSearchResponse {
-  /** params defines the parameters of the module. */
+  /**
+   * params defines the parameters of the module.
+   */
   blocks: ResultBlockSearch[];
   total_count: bigint;
 }
-/** QueryTransactionByHashRequest is the response type for the Query/BlockSearch RPC method. */
+/**
+ * QueryTransactionByHashRequest is the response type for the Query/BlockSearch RPC method.
+ * @name QueryTransactionByHashRequest
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryTransactionByHashRequest
+ */
 export interface QueryTransactionByHashRequest {
-  /** Transaction hash in hex format */
+  /**
+   * Transaction hash in hex format
+   */
   hash: string;
 }
+/**
+ * @name QueryTransactionByHashResponse
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryTransactionByHashResponse
+ */
 export interface QueryTransactionByHashResponse {
-  /** Whether the transaction existed on the blockchain */
+  /**
+   * Whether the transaction existed on the blockchain
+   */
   hash: string;
   height: bigint;
   gas_fee: bigint;
   tx_size: bigint;
   events: Event[];
 }
+/**
+ * @name QueryIBCHeaderRequest
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryIBCHeaderRequest
+ */
 export interface QueryIBCHeaderRequest {
+  trusted_height: bigint;
   height: bigint;
 }
+/**
+ * @name QueryIBCHeaderResponse
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryIBCHeaderResponse
+ */
 export interface QueryIBCHeaderResponse {
   header?: Any;
 }
@@ -51,6 +100,12 @@ function createBaseQueryBlockResultsRequest(): QueryBlockResultsRequest {
     height: BigInt(0),
   };
 }
+/**
+ * QueryBlockResultsRequest is the request type for the Query/BlockResults RPC method.
+ * @name QueryBlockResultsRequest
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryBlockResultsRequest
+ */
 export const QueryBlockResultsRequest = {
   typeUrl: "/ibc.core.types.v1.QueryBlockResultsRequest",
   encode(message: QueryBlockResultsRequest, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -101,6 +156,12 @@ function createBaseQueryBlockResultsResponse(): QueryBlockResultsResponse {
     block_results: undefined,
   };
 }
+/**
+ * QueryBlockResultsResponse is the response type for the Query/BlockResults RPC method.
+ * @name QueryBlockResultsResponse
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryBlockResultsResponse
+ */
 export const QueryBlockResultsResponse = {
   typeUrl: "/ibc.core.types.v1.QueryBlockResultsResponse",
   encode(message: QueryBlockResultsResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -158,6 +219,12 @@ function createBaseQueryBlockSearchRequest(): QueryBlockSearchRequest {
     page: BigInt(0),
   };
 }
+/**
+ * QueryBlockSearchRequest is the request type for the Query/BlockSearch RPC method.
+ * @name QueryBlockSearchRequest
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryBlockSearchRequest
+ */
 export const QueryBlockSearchRequest = {
   typeUrl: "/ibc.core.types.v1.QueryBlockSearchRequest",
   encode(message: QueryBlockSearchRequest, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -245,6 +312,12 @@ function createBaseQueryBlockSearchResponse(): QueryBlockSearchResponse {
     total_count: BigInt(0),
   };
 }
+/**
+ * QueryBlockSearchResponse is the response type for the Query/BlockSearch RPC method.
+ * @name QueryBlockSearchResponse
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryBlockSearchResponse
+ */
 export const QueryBlockSearchResponse = {
   typeUrl: "/ibc.core.types.v1.QueryBlockSearchResponse",
   encode(message: QueryBlockSearchResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -309,6 +382,12 @@ function createBaseQueryTransactionByHashRequest(): QueryTransactionByHashReques
     hash: "",
   };
 }
+/**
+ * QueryTransactionByHashRequest is the response type for the Query/BlockSearch RPC method.
+ * @name QueryTransactionByHashRequest
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryTransactionByHashRequest
+ */
 export const QueryTransactionByHashRequest = {
   typeUrl: "/ibc.core.types.v1.QueryTransactionByHashRequest",
   encode(message: QueryTransactionByHashRequest, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -361,6 +440,11 @@ function createBaseQueryTransactionByHashResponse(): QueryTransactionByHashRespo
     events: [],
   };
 }
+/**
+ * @name QueryTransactionByHashResponse
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryTransactionByHashResponse
+ */
 export const QueryTransactionByHashResponse = {
   typeUrl: "/ibc.core.types.v1.QueryTransactionByHashResponse",
   encode(
@@ -455,12 +539,21 @@ export const QueryTransactionByHashResponse = {
 };
 function createBaseQueryIBCHeaderRequest(): QueryIBCHeaderRequest {
   return {
+    trusted_height: BigInt(0),
     height: BigInt(0),
   };
 }
+/**
+ * @name QueryIBCHeaderRequest
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryIBCHeaderRequest
+ */
 export const QueryIBCHeaderRequest = {
   typeUrl: "/ibc.core.types.v1.QueryIBCHeaderRequest",
   encode(message: QueryIBCHeaderRequest, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
+    if (message.trusted_height !== BigInt(0)) {
+      writer.uint32(8).uint64(message.trusted_height);
+    }
     if (message.height !== BigInt(0)) {
       writer.uint32(16).uint64(message.height);
     }
@@ -473,6 +566,9 @@ export const QueryIBCHeaderRequest = {
     while (reader.pos < end) {
       const tag = reader.uint32();
       switch (tag >>> 3) {
+        case 1:
+          message.trusted_height = reader.uint64();
+          break;
         case 2:
           message.height = reader.uint64();
           break;
@@ -485,16 +581,22 @@ export const QueryIBCHeaderRequest = {
   },
   fromJSON(object: any): QueryIBCHeaderRequest {
     const obj = createBaseQueryIBCHeaderRequest();
+    if (isSet(object.trusted_height)) obj.trusted_height = BigInt(object.trusted_height.toString());
     if (isSet(object.height)) obj.height = BigInt(object.height.toString());
     return obj;
   },
   toJSON(message: QueryIBCHeaderRequest): unknown {
     const obj: any = {};
+    message.trusted_height !== undefined &&
+      (obj.trusted_height = (message.trusted_height || BigInt(0)).toString());
     message.height !== undefined && (obj.height = (message.height || BigInt(0)).toString());
     return obj;
   },
   fromPartial<I extends Exact<DeepPartial<QueryIBCHeaderRequest>, I>>(object: I): QueryIBCHeaderRequest {
     const message = createBaseQueryIBCHeaderRequest();
+    if (object.trusted_height !== undefined && object.trusted_height !== null) {
+      message.trusted_height = BigInt(object.trusted_height.toString());
+    }
     if (object.height !== undefined && object.height !== null) {
       message.height = BigInt(object.height.toString());
     }
@@ -506,6 +608,11 @@ function createBaseQueryIBCHeaderResponse(): QueryIBCHeaderResponse {
     header: undefined,
   };
 }
+/**
+ * @name QueryIBCHeaderResponse
+ * @package ibc.core.types.v1
+ * @see proto type: ibc.core.types.v1.QueryIBCHeaderResponse
+ */
 export const QueryIBCHeaderResponse = {
   typeUrl: "/ibc.core.types.v1.QueryIBCHeaderResponse",
   encode(message: QueryIBCHeaderResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -586,3 +693,6 @@ export class QueryClientImpl implements Query {
     return promise.then((data) => QueryIBCHeaderResponse.decode(new BinaryReader(data)));
   }
 }
+export const createClientImpl = (rpc: Rpc) => {
+  return new QueryClientImpl(rpc);
+};

@@ -7,17 +7,15 @@ import {
   WithOptionalTraceRegistryUpdate,
   WithPacketPolicyAndChannelToken,
   WithTransferAmount,
-  WithTransferModuleSpend,
-  WithTransferModuleUtxo,
+  WithVoucherMetadataOutput,
   WithVerifyProof,
 } from './fragments';
 
 export type UnsignedTimeoutPacketMintDto = WithHostStateUpdate &
   WithChannelContext &
-  WithTransferModuleUtxo &
   WithChannelSpend &
-  WithTransferModuleSpend &
   WithMintVoucherRedeemer &
+  WithVoucherMetadataOutput &
   WithOptionalTraceRegistryUpdate &
   WithTransferAmount &
   WithConstructedAddress &
@@ -25,6 +23,5 @@ export type UnsignedTimeoutPacketMintDto = WithHostStateUpdate &
   WithVerifyProof & {
   senderAddress: string;
   spendChannelAddress: string;
-  transferModuleAddress: string;
   voucherTokenUnit: string;
 };

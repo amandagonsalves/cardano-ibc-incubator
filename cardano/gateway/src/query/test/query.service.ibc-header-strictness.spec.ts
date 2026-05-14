@@ -1,5 +1,6 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { status } from '@grpc/grpc-js';
 import { QueryService } from '../services/query.service';
 import { KupoService } from '../../shared/modules/kupo/kupo.service';
 import { LucidService } from '../../shared/modules/lucid/lucid.service';
@@ -52,6 +53,23 @@ const makeCertificate = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
+async function expectGrpcError(
+  promise: Promise<unknown>,
+  code: status,
+  gatewayCode: string,
+): Promise<{ message: string; code: number }> {
+  try {
+    await promise;
+  } catch (error) {
+    const payload = (error as { getError?: () => { message: string; code: number } }).getError?.();
+    expect(payload?.code).toBe(code);
+    expect(payload?.message).toContain(gatewayCode);
+    return payload!;
+  }
+
+  throw new Error(`Expected ${gatewayCode} gRPC error`);
+}
+
 describe('QueryService IBC header strictness regressions', () => {
   let service: QueryService;
   let loggerMock: {
@@ -81,6 +99,7 @@ describe('QueryService IBC header strictness regressions', () => {
     const configServiceMock = {
       get: jest.fn().mockImplementation((key: string) => {
         if (key === 'cardanoChainId') return 'cardano-devnet';
+        if (key === 'cardanoLightClientMode') return 'mithril';
         if (key === 'deployment') {
           return {
             hostStateNFT: {
@@ -184,6 +203,7 @@ describe('QueryService IBC header strictness regressions', () => {
       } as unknown as MiniProtocalsService,
       mithrilServiceMock as unknown as MithrilService,
       {} as DenomTraceService,
+      {} as any,
     );
   });
 
@@ -194,6 +214,11 @@ describe('QueryService IBC header strictness regressions', () => {
       'Failed to converge Mithril snapshot/proof/HostState alignment',
     );
     // Hard failure must happen before block-body fetch / header materialization.
+    expect((service as any).miniProtocalsService.fetchTransactionBodyCbor).not.toHaveBeenCalled();
+  });
+
+  it('returns typed not-found status when the requested Mithril header height is unavailable', async () => {
+    await expectGrpcError(service.queryIBCHeader({ height: 999n } as any), status.NOT_FOUND, 'HEIGHT_NOT_FOUND');
     expect((service as any).miniProtocalsService.fetchTransactionBodyCbor).not.toHaveBeenCalled();
   });
 

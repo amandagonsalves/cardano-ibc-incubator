@@ -3,61 +3,137 @@ import { ResponseDeliverTx } from "../../core/types/v1/block";
 import { BinaryReader, BinaryWriter } from "../../../binary";
 import { isSet, DeepPartial, Exact, Rpc } from "../../../helpers";
 export const protobufPackage = "ibc.cardano.v1";
-/** QueryEventsRequest is the request type for the Query/Events RPC method. */
+/**
+ * QueryEventsRequest is the request type for the Query/Events RPC method.
+ * @name QueryEventsRequest
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.QueryEventsRequest
+ */
 export interface QueryEventsRequest {
-  /** Height from which to query events (exclusive - returns events after this height) */
+  /**
+   * Height from which to query events (exclusive - returns events after this height)
+   */
   since_height: bigint;
 }
-/** QueryEventsResponse is the response type for the Query/Events RPC method. */
+/**
+ * QueryEventsResponse is the response type for the Query/Events RPC method.
+ * @name QueryEventsResponse
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.QueryEventsResponse
+ */
 export interface QueryEventsResponse {
-  /** Current chain height at the time of the query */
+  /**
+   * Current chain height at the time of the query
+   */
   current_height: bigint;
-  /** Events grouped by block height */
+  /**
+   * Highest block height actually scanned for this response page
+   */
+  scanned_to_height: bigint;
+  /**
+   * Events grouped by block height
+   */
   events: BlockEvents[];
 }
-/** BlockEvents contains all IBC events for a specific block */
+/**
+ * BlockEvents contains all IBC events for a specific block
+ * @name BlockEvents
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BlockEvents
+ */
 export interface BlockEvents {
-  /** Block height */
+  /**
+   * Block height
+   */
   height: bigint;
-  /** IBC events that occurred in this block */
+  /**
+   * IBC events that occurred in this block
+   */
   events: ResponseDeliverTx[];
 }
+/**
+ * @name QueryBridgeManifestRequest
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.QueryBridgeManifestRequest
+ */
 export interface QueryBridgeManifestRequest {}
+/**
+ * @name QueryBridgeManifestResponse
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.QueryBridgeManifestResponse
+ */
 export interface QueryBridgeManifestResponse {
   manifest?: BridgeManifest;
 }
+/**
+ * @name BridgeManifest
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifest
+ */
 export interface BridgeManifest {
   schema_version: number;
   deployment_id: string;
+  /**
+   * RFC 3339 / ISO-8601 timestamp for when the bridge deployment completed.
+   */
   deployed_at: string;
   cardano?: BridgeManifestCardanoInfo;
   host_state_nft?: BridgeManifestAuthToken;
-  handler_auth_token?: BridgeManifestAuthToken;
   validators?: BridgeManifestValidators;
   modules?: BridgeManifestModules;
 }
+/**
+ * @name BridgeManifestCardanoInfo
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestCardanoInfo
+ */
 export interface BridgeManifestCardanoInfo {
   chain_id: string;
   network_magic: bigint;
   network: string;
 }
+/**
+ * @name BridgeManifestAuthToken
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestAuthToken
+ */
 export interface BridgeManifestAuthToken {
   policy_id: string;
   token_name: string;
 }
+/**
+ * @name BridgeManifestRefUtxo
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestRefUtxo
+ */
 export interface BridgeManifestRefUtxo {
   tx_hash: string;
   output_index: bigint;
 }
+/**
+ * @name BridgeManifestValidator
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestValidator
+ */
 export interface BridgeManifestValidator {
   script_hash: string;
   address: string;
   ref_utxo?: BridgeManifestRefUtxo;
 }
+/**
+ * @name BridgeManifestReferredValidator
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestReferredValidator
+ */
 export interface BridgeManifestReferredValidator {
   script_hash: string;
   ref_utxo?: BridgeManifestRefUtxo;
 }
+/**
+ * @name BridgeManifestSpendChannelRefValidators
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestSpendChannelRefValidators
+ */
 export interface BridgeManifestSpendChannelRefValidators {
   acknowledge_packet?: BridgeManifestReferredValidator;
   chan_close_confirm?: BridgeManifestReferredValidator;
@@ -68,15 +144,24 @@ export interface BridgeManifestSpendChannelRefValidators {
   send_packet?: BridgeManifestReferredValidator;
   timeout_packet?: BridgeManifestReferredValidator;
 }
+/**
+ * @name BridgeManifestSpendChannelValidator
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestSpendChannelValidator
+ */
 export interface BridgeManifestSpendChannelValidator {
   script_hash: string;
   address: string;
   ref_utxo?: BridgeManifestRefUtxo;
   ref_validator?: BridgeManifestSpendChannelRefValidators;
 }
+/**
+ * @name BridgeManifestValidators
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestValidators
+ */
 export interface BridgeManifestValidators {
   host_state_stt?: BridgeManifestValidator;
-  spend_handler?: BridgeManifestValidator;
   spend_client?: BridgeManifestValidator;
   spend_connection?: BridgeManifestValidator;
   spend_channel?: BridgeManifestSpendChannelValidator;
@@ -87,12 +172,21 @@ export interface BridgeManifestValidators {
   mint_channel_stt?: BridgeManifestValidator;
   mint_voucher?: BridgeManifestValidator;
 }
+/**
+ * @name BridgeManifestModule
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestModule
+ */
 export interface BridgeManifestModule {
   identifier: string;
   address: string;
 }
+/**
+ * @name BridgeManifestModules
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestModules
+ */
 export interface BridgeManifestModules {
-  handler?: BridgeManifestModule;
   transfer?: BridgeManifestModule;
   mock?: BridgeManifestModule;
 }
@@ -101,6 +195,12 @@ function createBaseQueryEventsRequest(): QueryEventsRequest {
     since_height: BigInt(0),
   };
 }
+/**
+ * QueryEventsRequest is the request type for the Query/Events RPC method.
+ * @name QueryEventsRequest
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.QueryEventsRequest
+ */
 export const QueryEventsRequest = {
   typeUrl: "/ibc.cardano.v1.QueryEventsRequest",
   encode(message: QueryEventsRequest, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -147,14 +247,24 @@ export const QueryEventsRequest = {
 function createBaseQueryEventsResponse(): QueryEventsResponse {
   return {
     current_height: BigInt(0),
+    scanned_to_height: BigInt(0),
     events: [],
   };
 }
+/**
+ * QueryEventsResponse is the response type for the Query/Events RPC method.
+ * @name QueryEventsResponse
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.QueryEventsResponse
+ */
 export const QueryEventsResponse = {
   typeUrl: "/ibc.cardano.v1.QueryEventsResponse",
   encode(message: QueryEventsResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
     if (message.current_height !== BigInt(0)) {
       writer.uint32(8).uint64(message.current_height);
+    }
+    if (message.scanned_to_height !== BigInt(0)) {
+      writer.uint32(24).uint64(message.scanned_to_height);
     }
     for (const v of message.events) {
       BlockEvents.encode(v!, writer.uint32(18).fork()).ldelim();
@@ -171,6 +281,9 @@ export const QueryEventsResponse = {
         case 1:
           message.current_height = reader.uint64();
           break;
+        case 3:
+          message.scanned_to_height = reader.uint64();
+          break;
         case 2:
           message.events.push(BlockEvents.decode(reader, reader.uint32()));
           break;
@@ -184,6 +297,7 @@ export const QueryEventsResponse = {
   fromJSON(object: any): QueryEventsResponse {
     const obj = createBaseQueryEventsResponse();
     if (isSet(object.current_height)) obj.current_height = BigInt(object.current_height.toString());
+    if (isSet(object.scanned_to_height)) obj.scanned_to_height = BigInt(object.scanned_to_height.toString());
     if (Array.isArray(object?.events)) obj.events = object.events.map((e: any) => BlockEvents.fromJSON(e));
     return obj;
   },
@@ -191,6 +305,8 @@ export const QueryEventsResponse = {
     const obj: any = {};
     message.current_height !== undefined &&
       (obj.current_height = (message.current_height || BigInt(0)).toString());
+    message.scanned_to_height !== undefined &&
+      (obj.scanned_to_height = (message.scanned_to_height || BigInt(0)).toString());
     if (message.events) {
       obj.events = message.events.map((e) => (e ? BlockEvents.toJSON(e) : undefined));
     } else {
@@ -203,6 +319,9 @@ export const QueryEventsResponse = {
     if (object.current_height !== undefined && object.current_height !== null) {
       message.current_height = BigInt(object.current_height.toString());
     }
+    if (object.scanned_to_height !== undefined && object.scanned_to_height !== null) {
+      message.scanned_to_height = BigInt(object.scanned_to_height.toString());
+    }
     message.events = object.events?.map((e) => BlockEvents.fromPartial(e)) || [];
     return message;
   },
@@ -213,6 +332,12 @@ function createBaseBlockEvents(): BlockEvents {
     events: [],
   };
 }
+/**
+ * BlockEvents contains all IBC events for a specific block
+ * @name BlockEvents
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BlockEvents
+ */
 export const BlockEvents = {
   typeUrl: "/ibc.cardano.v1.BlockEvents",
   encode(message: BlockEvents, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -273,6 +398,11 @@ export const BlockEvents = {
 function createBaseQueryBridgeManifestRequest(): QueryBridgeManifestRequest {
   return {};
 }
+/**
+ * @name QueryBridgeManifestRequest
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.QueryBridgeManifestRequest
+ */
 export const QueryBridgeManifestRequest = {
   typeUrl: "/ibc.cardano.v1.QueryBridgeManifestRequest",
   encode(_: QueryBridgeManifestRequest, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -310,6 +440,11 @@ function createBaseQueryBridgeManifestResponse(): QueryBridgeManifestResponse {
     manifest: undefined,
   };
 }
+/**
+ * @name QueryBridgeManifestResponse
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.QueryBridgeManifestResponse
+ */
 export const QueryBridgeManifestResponse = {
   typeUrl: "/ibc.cardano.v1.QueryBridgeManifestResponse",
   encode(message: QueryBridgeManifestResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -363,11 +498,15 @@ function createBaseBridgeManifest(): BridgeManifest {
     deployed_at: "",
     cardano: undefined,
     host_state_nft: undefined,
-    handler_auth_token: undefined,
     validators: undefined,
     modules: undefined,
   };
 }
+/**
+ * @name BridgeManifest
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifest
+ */
 export const BridgeManifest = {
   typeUrl: "/ibc.cardano.v1.BridgeManifest",
   encode(message: BridgeManifest, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -385,9 +524,6 @@ export const BridgeManifest = {
     }
     if (message.host_state_nft !== undefined) {
       BridgeManifestAuthToken.encode(message.host_state_nft, writer.uint32(34).fork()).ldelim();
-    }
-    if (message.handler_auth_token !== undefined) {
-      BridgeManifestAuthToken.encode(message.handler_auth_token, writer.uint32(42).fork()).ldelim();
     }
     if (message.validators !== undefined) {
       BridgeManifestValidators.encode(message.validators, writer.uint32(50).fork()).ldelim();
@@ -419,9 +555,6 @@ export const BridgeManifest = {
         case 4:
           message.host_state_nft = BridgeManifestAuthToken.decode(reader, reader.uint32());
           break;
-        case 5:
-          message.handler_auth_token = BridgeManifestAuthToken.decode(reader, reader.uint32());
-          break;
         case 6:
           message.validators = BridgeManifestValidators.decode(reader, reader.uint32());
           break;
@@ -443,8 +576,6 @@ export const BridgeManifest = {
     if (isSet(object.cardano)) obj.cardano = BridgeManifestCardanoInfo.fromJSON(object.cardano);
     if (isSet(object.host_state_nft))
       obj.host_state_nft = BridgeManifestAuthToken.fromJSON(object.host_state_nft);
-    if (isSet(object.handler_auth_token))
-      obj.handler_auth_token = BridgeManifestAuthToken.fromJSON(object.handler_auth_token);
     if (isSet(object.validators)) obj.validators = BridgeManifestValidators.fromJSON(object.validators);
     if (isSet(object.modules)) obj.modules = BridgeManifestModules.fromJSON(object.modules);
     return obj;
@@ -459,10 +590,6 @@ export const BridgeManifest = {
     message.host_state_nft !== undefined &&
       (obj.host_state_nft = message.host_state_nft
         ? BridgeManifestAuthToken.toJSON(message.host_state_nft)
-        : undefined);
-    message.handler_auth_token !== undefined &&
-      (obj.handler_auth_token = message.handler_auth_token
-        ? BridgeManifestAuthToken.toJSON(message.handler_auth_token)
         : undefined);
     message.validators !== undefined &&
       (obj.validators = message.validators ? BridgeManifestValidators.toJSON(message.validators) : undefined);
@@ -481,9 +608,6 @@ export const BridgeManifest = {
     if (object.host_state_nft !== undefined && object.host_state_nft !== null) {
       message.host_state_nft = BridgeManifestAuthToken.fromPartial(object.host_state_nft);
     }
-    if (object.handler_auth_token !== undefined && object.handler_auth_token !== null) {
-      message.handler_auth_token = BridgeManifestAuthToken.fromPartial(object.handler_auth_token);
-    }
     if (object.validators !== undefined && object.validators !== null) {
       message.validators = BridgeManifestValidators.fromPartial(object.validators);
     }
@@ -500,6 +624,11 @@ function createBaseBridgeManifestCardanoInfo(): BridgeManifestCardanoInfo {
     network: "",
   };
 }
+/**
+ * @name BridgeManifestCardanoInfo
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestCardanoInfo
+ */
 export const BridgeManifestCardanoInfo = {
   typeUrl: "/ibc.cardano.v1.BridgeManifestCardanoInfo",
   encode(message: BridgeManifestCardanoInfo, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -570,6 +699,11 @@ function createBaseBridgeManifestAuthToken(): BridgeManifestAuthToken {
     token_name: "",
   };
 }
+/**
+ * @name BridgeManifestAuthToken
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestAuthToken
+ */
 export const BridgeManifestAuthToken = {
   typeUrl: "/ibc.cardano.v1.BridgeManifestAuthToken",
   encode(message: BridgeManifestAuthToken, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -626,6 +760,11 @@ function createBaseBridgeManifestRefUtxo(): BridgeManifestRefUtxo {
     output_index: BigInt(0),
   };
 }
+/**
+ * @name BridgeManifestRefUtxo
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestRefUtxo
+ */
 export const BridgeManifestRefUtxo = {
   typeUrl: "/ibc.cardano.v1.BridgeManifestRefUtxo",
   encode(message: BridgeManifestRefUtxo, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -685,6 +824,11 @@ function createBaseBridgeManifestValidator(): BridgeManifestValidator {
     ref_utxo: undefined,
   };
 }
+/**
+ * @name BridgeManifestValidator
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestValidator
+ */
 export const BridgeManifestValidator = {
   typeUrl: "/ibc.cardano.v1.BridgeManifestValidator",
   encode(message: BridgeManifestValidator, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -753,6 +897,11 @@ function createBaseBridgeManifestReferredValidator(): BridgeManifestReferredVali
     ref_utxo: undefined,
   };
 }
+/**
+ * @name BridgeManifestReferredValidator
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestReferredValidator
+ */
 export const BridgeManifestReferredValidator = {
   typeUrl: "/ibc.cardano.v1.BridgeManifestReferredValidator",
   encode(
@@ -823,6 +972,11 @@ function createBaseBridgeManifestSpendChannelRefValidators(): BridgeManifestSpen
     timeout_packet: undefined,
   };
 }
+/**
+ * @name BridgeManifestSpendChannelRefValidators
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestSpendChannelRefValidators
+ */
 export const BridgeManifestSpendChannelRefValidators = {
   typeUrl: "/ibc.cardano.v1.BridgeManifestSpendChannelRefValidators",
   encode(
@@ -988,6 +1142,11 @@ function createBaseBridgeManifestSpendChannelValidator(): BridgeManifestSpendCha
     ref_validator: undefined,
   };
 }
+/**
+ * @name BridgeManifestSpendChannelValidator
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestSpendChannelValidator
+ */
 export const BridgeManifestSpendChannelValidator = {
   typeUrl: "/ibc.cardano.v1.BridgeManifestSpendChannelValidator",
   encode(
@@ -1076,7 +1235,6 @@ export const BridgeManifestSpendChannelValidator = {
 function createBaseBridgeManifestValidators(): BridgeManifestValidators {
   return {
     host_state_stt: undefined,
-    spend_handler: undefined,
     spend_client: undefined,
     spend_connection: undefined,
     spend_channel: undefined,
@@ -1088,14 +1246,16 @@ function createBaseBridgeManifestValidators(): BridgeManifestValidators {
     mint_voucher: undefined,
   };
 }
+/**
+ * @name BridgeManifestValidators
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestValidators
+ */
 export const BridgeManifestValidators = {
   typeUrl: "/ibc.cardano.v1.BridgeManifestValidators",
   encode(message: BridgeManifestValidators, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
     if (message.host_state_stt !== undefined) {
       BridgeManifestValidator.encode(message.host_state_stt, writer.uint32(10).fork()).ldelim();
-    }
-    if (message.spend_handler !== undefined) {
-      BridgeManifestValidator.encode(message.spend_handler, writer.uint32(18).fork()).ldelim();
     }
     if (message.spend_client !== undefined) {
       BridgeManifestValidator.encode(message.spend_client, writer.uint32(26).fork()).ldelim();
@@ -1136,9 +1296,6 @@ export const BridgeManifestValidators = {
         case 1:
           message.host_state_stt = BridgeManifestValidator.decode(reader, reader.uint32());
           break;
-        case 2:
-          message.spend_handler = BridgeManifestValidator.decode(reader, reader.uint32());
-          break;
         case 3:
           message.spend_client = BridgeManifestValidator.decode(reader, reader.uint32());
           break;
@@ -1177,8 +1334,6 @@ export const BridgeManifestValidators = {
     const obj = createBaseBridgeManifestValidators();
     if (isSet(object.host_state_stt))
       obj.host_state_stt = BridgeManifestValidator.fromJSON(object.host_state_stt);
-    if (isSet(object.spend_handler))
-      obj.spend_handler = BridgeManifestValidator.fromJSON(object.spend_handler);
     if (isSet(object.spend_client)) obj.spend_client = BridgeManifestValidator.fromJSON(object.spend_client);
     if (isSet(object.spend_connection))
       obj.spend_connection = BridgeManifestValidator.fromJSON(object.spend_connection);
@@ -1201,10 +1356,6 @@ export const BridgeManifestValidators = {
     message.host_state_stt !== undefined &&
       (obj.host_state_stt = message.host_state_stt
         ? BridgeManifestValidator.toJSON(message.host_state_stt)
-        : undefined);
-    message.spend_handler !== undefined &&
-      (obj.spend_handler = message.spend_handler
-        ? BridgeManifestValidator.toJSON(message.spend_handler)
         : undefined);
     message.spend_client !== undefined &&
       (obj.spend_client = message.spend_client
@@ -1251,9 +1402,6 @@ export const BridgeManifestValidators = {
     if (object.host_state_stt !== undefined && object.host_state_stt !== null) {
       message.host_state_stt = BridgeManifestValidator.fromPartial(object.host_state_stt);
     }
-    if (object.spend_handler !== undefined && object.spend_handler !== null) {
-      message.spend_handler = BridgeManifestValidator.fromPartial(object.spend_handler);
-    }
     if (object.spend_client !== undefined && object.spend_client !== null) {
       message.spend_client = BridgeManifestValidator.fromPartial(object.spend_client);
     }
@@ -1290,6 +1438,11 @@ function createBaseBridgeManifestModule(): BridgeManifestModule {
     address: "",
   };
 }
+/**
+ * @name BridgeManifestModule
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestModule
+ */
 export const BridgeManifestModule = {
   typeUrl: "/ibc.cardano.v1.BridgeManifestModule",
   encode(message: BridgeManifestModule, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1342,17 +1495,18 @@ export const BridgeManifestModule = {
 };
 function createBaseBridgeManifestModules(): BridgeManifestModules {
   return {
-    handler: undefined,
     transfer: undefined,
     mock: undefined,
   };
 }
+/**
+ * @name BridgeManifestModules
+ * @package ibc.cardano.v1
+ * @see proto type: ibc.cardano.v1.BridgeManifestModules
+ */
 export const BridgeManifestModules = {
   typeUrl: "/ibc.cardano.v1.BridgeManifestModules",
   encode(message: BridgeManifestModules, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
-    if (message.handler !== undefined) {
-      BridgeManifestModule.encode(message.handler, writer.uint32(10).fork()).ldelim();
-    }
     if (message.transfer !== undefined) {
       BridgeManifestModule.encode(message.transfer, writer.uint32(18).fork()).ldelim();
     }
@@ -1368,9 +1522,6 @@ export const BridgeManifestModules = {
     while (reader.pos < end) {
       const tag = reader.uint32();
       switch (tag >>> 3) {
-        case 1:
-          message.handler = BridgeManifestModule.decode(reader, reader.uint32());
-          break;
         case 2:
           message.transfer = BridgeManifestModule.decode(reader, reader.uint32());
           break;
@@ -1386,15 +1537,12 @@ export const BridgeManifestModules = {
   },
   fromJSON(object: any): BridgeManifestModules {
     const obj = createBaseBridgeManifestModules();
-    if (isSet(object.handler)) obj.handler = BridgeManifestModule.fromJSON(object.handler);
     if (isSet(object.transfer)) obj.transfer = BridgeManifestModule.fromJSON(object.transfer);
     if (isSet(object.mock)) obj.mock = BridgeManifestModule.fromJSON(object.mock);
     return obj;
   },
   toJSON(message: BridgeManifestModules): unknown {
     const obj: any = {};
-    message.handler !== undefined &&
-      (obj.handler = message.handler ? BridgeManifestModule.toJSON(message.handler) : undefined);
     message.transfer !== undefined &&
       (obj.transfer = message.transfer ? BridgeManifestModule.toJSON(message.transfer) : undefined);
     message.mock !== undefined &&
@@ -1403,9 +1551,6 @@ export const BridgeManifestModules = {
   },
   fromPartial<I extends Exact<DeepPartial<BridgeManifestModules>, I>>(object: I): BridgeManifestModules {
     const message = createBaseBridgeManifestModules();
-    if (object.handler !== undefined && object.handler !== null) {
-      message.handler = BridgeManifestModule.fromPartial(object.handler);
-    }
     if (object.transfer !== undefined && object.transfer !== null) {
       message.transfer = BridgeManifestModule.fromPartial(object.transfer);
     }
@@ -1443,3 +1588,6 @@ export class QueryClientImpl implements Query {
     return promise.then((data) => QueryBridgeManifestResponse.decode(new BinaryReader(data)));
   }
 }
+export const createClientImpl = (rpc: Rpc) => {
+  return new QueryClientImpl(rpc);
+};

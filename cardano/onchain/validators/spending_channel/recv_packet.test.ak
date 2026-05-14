@@ -89,8 +89,7 @@ test succeed_recv_packet() {
   let channel_input =
     test_utils.build_channel_input(input_channel_datum, mock_data.channel_token)
 
-  let inputs =
-    [mock_data.module_input, channel_input]
+  let inputs = [mock_data.module_input, channel_input]
 
   //========================arrange reference_inputs=======================
   let proof_height = Height { revision_number: 1, revision_height: 19 }
@@ -107,8 +106,7 @@ test succeed_recv_packet() {
   let client_input =
     test_utils.update_client(proof_height, cons_state, mock_data.client_input)
 
-  let reference_inputs =
-    [mock_data.connection_input, client_input]
+  let reference_inputs = [mock_data.connection_input, client_input]
 
   //========================arrange outputs=======================
   let ack = acknowledgement_mod.new_result_acknowledgement("AQ==")
@@ -149,8 +147,7 @@ test succeed_recv_packet() {
       mock_data.channel_token,
     )
 
-  let outputs =
-    [channel_output]
+  let outputs = [channel_output]
 
   //========================arrange validity_range=======================
   let validity_range = mock_data.validity_range
@@ -314,11 +311,95 @@ test succeed_recv_packet() {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
-      reference_inputs: reference_inputs,
-      outputs: outputs,
-      redeemers: redeemers,
-      validity_range: validity_range,
+      inputs,
+      reference_inputs,
+      outputs,
+      redeemers,
+      validity_range,
+    }
+
+  recv_packet.recv_packet.mint(
+    mock_data.client_minting_policy_id,
+    mock_data.connection_minting_policy_id,
+    mock_data.port_minting_policy_id,
+    mock_data.verify_proof_policy_id,
+    mock_data.channel_token,
+    mock_data.recv_packet_policy_id,
+    transaction,
+  )
+}
+
+test recv_packet_fails_when_channel_is_closed() fail {
+  let mock_data = setup()
+
+  let channel_id =
+    chan_keys_mod.format_channel_identifier(mock_data.channel_sequence)
+
+  let input_channel =
+    Channel {
+      state: chan_state_mod.Closed,
+      ordering: chan_order_mod.Unordered,
+      counterparty: ChannelCounterparty {
+        port_id: "port-1",
+        channel_id: "channel-0",
+      },
+      connection_hops: [mock_data.connection_id],
+      version: "mock-version",
+    }
+
+  let input_channel_datum =
+    ChannelDatum {
+      state: ChannelDatumState {
+        channel: input_channel,
+        next_sequence_send: 1,
+        next_sequence_recv: 1,
+        next_sequence_ack: 1,
+        packet_commitment: [],
+        packet_receipt: [],
+        packet_acknowledgement: [],
+      },
+      port_id: mock_data.port_id,
+      token: mock_data.channel_token,
+    }
+
+  let channel_input =
+    test_utils.build_channel_input(input_channel_datum, mock_data.channel_token)
+
+  let channel_output =
+    test_utils.build_channel_output(
+      input_channel_datum,
+      mock_data.channel_token,
+    )
+
+  let packet =
+    Packet {
+      sequence: 1,
+      source_port: input_channel.counterparty.port_id,
+      source_channel: input_channel.counterparty.channel_id,
+      destination_port: mock_data.port_id,
+      destination_channel: channel_id,
+      data: "mock packet data",
+      timeout_height: Height { revision_number: 0, revision_height: 0 },
+      timeout_timestamp: 1735689600000000000,
+    }
+
+  let spend_channel_redeemer: Redeemer =
+    RecvPacket {
+      packet,
+      proof_commitment: MerkleProof { proofs: [] },
+      proof_height: Height { revision_number: 1, revision_height: 19 },
+    }
+
+  let redeemers: Pairs<ScriptPurpose, Redeemer> =
+    [Pair(Spend(channel_input.output_reference), spend_channel_redeemer)]
+
+  let transaction =
+    Transaction {
+      ..transaction.placeholder,
+      inputs: [channel_input],
+      outputs: [channel_output],
+      redeemers,
+      validity_range: mock_data.validity_range,
     }
 
   recv_packet.recv_packet.mint(
@@ -409,8 +490,7 @@ test recv_packet_non_mock_data() {
       },
     }
 
-  let inputs =
-    [spend_channel_input]
+  let inputs = [spend_channel_input]
 
   let outputs =
     [
@@ -885,11 +965,11 @@ test recv_packet_non_mock_data() {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
-      reference_inputs: reference_inputs,
-      outputs: outputs,
-      redeemers: redeemers,
-      validity_range: validity_range,
+      inputs,
+      reference_inputs,
+      outputs,
+      redeemers,
+      validity_range,
     }
 
   recv_packet.recv_packet.mint(

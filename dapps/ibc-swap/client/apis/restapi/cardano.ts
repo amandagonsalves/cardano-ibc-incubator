@@ -1,12 +1,18 @@
-import axios from 'axios';
+import axios, { type AxiosError } from 'axios';
 import { toast } from 'react-toastify';
-import API from './api';
 import type { CardanoAssetDenomTrace } from '@/types/cardanoTrace';
-import {
-  listCardanoIbcAssetsFromRegistry,
-  lookupCardanoAssetDenomTraceFromRegistry,
-} from '@/services/cardanoTraceRegistry';
 import { cardanoPlannerClient } from '@/services/cardanoPlanner';
+import API from './api';
+
+export type CardanoWalletUtxo = {
+  txHash: string;
+  outputIndex: number;
+  address: string;
+  assets: Record<string, string>;
+  datumHash?: string | null;
+  datum?: string | null;
+  scriptRef?: string | null;
+};
 
 interface TransferParams {
   sourcePort: string;
@@ -24,15 +30,22 @@ interface TransferParams {
   timeoutTimestamp?: string;
   memo?: string;
   signer: string;
+  walletUtxos?: CardanoWalletUtxo[];
 }
 
 interface UnsignedTx {
   type_url: string;
-  value: any;
+  unsignedTxCborHex?: string;
+  value?: any;
 }
 
 interface TransferResponseData {
   unsignedTx?: UnsignedTx;
+  feeLovelace?: string;
+}
+
+interface SubmitSignedCardanoTxResponse {
+  txHash: string;
 }
 
 export type { CardanoAssetDenomTrace } from '@/types/cardanoTrace';
@@ -64,7 +77,12 @@ export interface SwapEstimateResponse {
 
 export interface TransferPlanResponse {
   foundRoute: boolean;
-  mode: 'same-chain' | 'native-forward' | 'unwind' | 'unwind-then-forward' | null;
+  mode:
+    | 'same-chain'
+    | 'native-forward'
+    | 'unwind'
+    | 'unwind-then-forward'
+    | null;
   chains: string[];
   routes: string[];
   tokenTrace: {
@@ -86,29 +104,223 @@ export interface TransferPlanResponse {
     | 'no-outbound-channels'
     | 'no-route-found';
   failureMessage?: string;
+  routeDiagnostics?: {
+    expectedChainPath: string[];
+    missingHops: Array<{
+      fromChainId: string;
+      toChainId: string;
+      reason:
+        | 'no-outbound-channel'
+        | 'no-channel-to-destination'
+        | 'blocked-by-visited-chain';
+      availableDestChainIds: string[];
+    }>;
+  };
+}
+
+export type CheqdIcqQueryKind =
+  | 'didDoc'
+  | 'didDocVersion'
+  | 'didDocVersionsMetadata'
+  | 'resource'
+  | 'resourceMetadata'
+  | 'latestResourceVersion'
+  | 'latestResourceVersionMetadata';
+
+type CheqdIcqBaseBuildParams = {
+  sourceChannel: string;
+  signer: string;
+  timeoutHeight?: {
+    revisionNumber?: string;
+    revisionHeight?: string;
+  };
+  timeoutTimestamp?: string;
+};
+
+export type CheqdIcqBuildParams =
+  | (CheqdIcqBaseBuildParams & {
+      kind: 'didDoc' | 'didDocVersionsMetadata';
+      id: string;
+    })
+  | (CheqdIcqBaseBuildParams & {
+      kind: 'didDocVersion';
+      id: string;
+      version: string;
+    })
+  | (CheqdIcqBaseBuildParams & {
+      kind: 'resource' | 'resourceMetadata';
+      collectionId: string;
+      id: string;
+    })
+  | (CheqdIcqBaseBuildParams & {
+      kind: 'latestResourceVersion' | 'latestResourceVersionMetadata';
+      collectionId: string;
+      name: string;
+      resourceType: string;
+    });
+
+export interface CheqdIcqBuildResponse {
+  queryPath: string;
+  sourcePort: string;
+  sourceChannel: string;
+  packetDataHex: string;
+  result: unknown;
+  unsignedTx: UnsignedTx;
+}
+
+export interface DecodedCheqdIcqAcknowledgement {
+  status: 'success' | 'error' | 'query_error';
+  queryPath: string;
+  sourcePort: string;
+  error?: string;
+  response?: Record<string, unknown>;
+  responseQuery?: {
+    code: number;
+    log: string;
+    info: string;
+    index: string;
+    height: string;
+    codespace: string;
+    rawValueBase64: string;
+  };
+}
+
+export type CheqdIcqResultResponse =
+  | {
+      status: 'pending';
+      reason: 'source_tx_not_indexed' | 'pending_acknowledgement';
+      txHash?: string;
+      queryPath: string;
+      packetDataHex: string;
+      currentHeight: string;
+      nextSearchFromHeight: string;
+    }
+  | {
+      status: 'completed';
+      txHash?: string;
+      queryPath: string;
+      packetDataHex: string;
+      currentHeight: string;
+      nextSearchFromHeight: string;
+      completedHeight: string;
+      packetSequence: string | null;
+      acknowledgementHex: string;
+      acknowledgement: DecodedCheqdIcqAcknowledgement;
+    };
+
+export interface CheqdIcqResultParams {
+  txHash?: string;
+  sinceHeight?: string;
+  queryPath: string;
+  packetDataHex: string;
+  sourceChannel?: string;
+}
+
+const CHEQD_ICQ_ENDPOINTS: Record<CheqdIcqQueryKind, string> = {
+  didDoc: '/api/icq/cheqd/did-doc',
+  didDocVersion: '/api/icq/cheqd/did-doc-version',
+  didDocVersionsMetadata: '/api/icq/cheqd/did-doc-versions-metadata',
+  resource: '/api/icq/cheqd/resource',
+  resourceMetadata: '/api/icq/cheqd/resource-metadata',
+  latestResourceVersion: '/api/icq/cheqd/latest-resource-version',
+  latestResourceVersionMetadata:
+    '/api/icq/cheqd/latest-resource-version-metadata',
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function firstNonEmptyString(...values: unknown[]): string | undefined {
+  return values.find(
+    (value): value is string =>
+      typeof value === 'string' && value.trim().length > 0,
+  );
+}
+
+function getResponseErrorMessage(data: unknown): string | undefined {
+  if (typeof data === 'string' && data.trim()) {
+    return data;
+  }
+
+  if (!isRecord(data)) {
+    return undefined;
+  }
+
+  const { details } = data;
+  const cause = isRecord(details) ? details.cause : undefined;
+
+  return firstNonEmptyString(
+    data.message,
+    data.error,
+    data.reason,
+    isRecord(details) ? details.message : undefined,
+    isRecord(details) ? details.error : undefined,
+    isRecord(cause) ? cause.message : undefined,
+    isRecord(cause) ? cause.error : undefined,
+  );
+}
+
+function getAxiosRequestTarget(error: AxiosError): string {
+  const method =
+    typeof error.config?.method === 'string'
+      ? error.config.method.toUpperCase()
+      : undefined;
+  const url =
+    typeof error.config?.url === 'string' ? error.config.url : undefined;
+
+  if (method && url) {
+    return `${method} ${url}`;
+  }
+
+  return url || method || 'request';
+}
+
+function getAxiosTimeoutDescription(error: AxiosError): string {
+  const timeout = error.config?.timeout;
+  if (typeof timeout === 'number' && timeout > 0) {
+    return `${Math.round(timeout / 1000)}s`;
+  }
+
+  return 'the configured timeout';
 }
 
 function getGatewayErrorMessage(error: unknown): string {
   if (axios.isAxiosError(error)) {
-    const responseData = error.response?.data as
-      | {
-          message?: string;
-          error?: string;
-          exceptionName?: string;
-          type?: string;
-        }
-      | undefined;
-
-    if (typeof responseData?.message === 'string' && responseData.message.trim()) {
-      return responseData.message;
+    const responseMessage = getResponseErrorMessage(error.response?.data);
+    if (responseMessage) {
+      return responseMessage;
     }
 
-    if (typeof responseData?.error === 'string' && responseData.error.trim()) {
-      return responseData.error;
+    const requestTarget = getAxiosRequestTarget(error);
+    const rawMessage =
+      typeof error.message === 'string' && error.message.trim()
+        ? error.message
+        : undefined;
+
+    if (!error.response) {
+      if (
+        error.code === 'ECONNABORTED' ||
+        rawMessage?.toLowerCase().includes('timeout')
+      ) {
+        return `Request to ${requestTarget} timed out after ${getAxiosTimeoutDescription(
+          error,
+        )}. The local Cardano transaction builder can be slow while warming up; wait for the dapp container logs to settle and retry.`;
+      }
+
+      return `Request to ${requestTarget} failed before the dapp received a response${
+        rawMessage ? `: ${rawMessage}` : '.'
+      }. The local dapp API may have restarted, crashed, or disconnected while building the transaction. Check the dapp container logs and retry once it is ready.`;
     }
 
-    if (typeof error.message === 'string' && error.message.trim()) {
-      return error.message;
+    if (error.response.status) {
+      return `Request to ${requestTarget} failed with HTTP ${
+        error.response.status
+      }${error.response.statusText ? ` ${error.response.statusText}` : ''}.`;
+    }
+
+    if (rawMessage) {
+      return rawMessage;
     }
   }
 
@@ -129,6 +341,7 @@ export async function transfer({
   timeoutTimestamp,
   memo,
   signer,
+  walletUtxos,
 }: TransferParams): Promise<TransferResponseData> {
   try {
     const response = await axios({
@@ -144,13 +357,32 @@ export async function transfer({
         timeout_timestamp: timeoutTimestamp,
         memo,
         signer,
+        wallet_utxos: walletUtxos,
       },
     });
     return response.data;
   } catch (error) {
     const errorMessage = getGatewayErrorMessage(error);
-    toast.error(errorMessage, { theme: 'colored' });
-    return { unsignedTx: undefined };
+    throw new Error(errorMessage);
+  }
+}
+
+export async function submitSignedCardanoTx(
+  signedTxCbor: string,
+): Promise<string> {
+  try {
+    const response = await axios<SubmitSignedCardanoTxResponse>({
+      method: 'POST',
+      url: '/api/cardano/submit',
+      data: {
+        signed_tx_cbor: signedTxCbor,
+        description: 'IBC transfer signed by browser wallet',
+      },
+    });
+    return response.data.txHash;
+  } catch (error) {
+    const errorMessage = getGatewayErrorMessage(error);
+    throw new Error(errorMessage);
   }
 }
 
@@ -158,7 +390,10 @@ export async function lookupCardanoAssetDenomTrace(
   assetId: string,
 ): Promise<CardanoAssetDenomTrace | null> {
   try {
-    return await lookupCardanoAssetDenomTraceFromRegistry(assetId);
+    const response = await axios.get<CardanoAssetDenomTrace>(
+      `/api/cardano/trace-registry/${encodeURIComponent(assetId)}`,
+    );
+    return response.data;
   } catch (error) {
     const errorMessage = getGatewayErrorMessage(error);
     toast.error(errorMessage, { theme: 'colored' });
@@ -166,9 +401,29 @@ export async function lookupCardanoAssetDenomTrace(
   }
 }
 
-export async function listCardanoIbcAssets(): Promise<CardanoAssetDenomTrace[]> {
+export async function requireCardanoAssetDenomTrace(
+  assetId: string,
+): Promise<CardanoAssetDenomTrace> {
   try {
-    return await listCardanoIbcAssetsFromRegistry();
+    const response = await axios.get<CardanoAssetDenomTrace>(
+      `/api/cardano/trace-registry/${encodeURIComponent(assetId)}`,
+    );
+    return response.data;
+  } catch (error) {
+    const errorMessage = getGatewayErrorMessage(error);
+    toast.error(errorMessage, { theme: 'colored' });
+    throw new Error(errorMessage);
+  }
+}
+
+export async function listCardanoIbcAssets(): Promise<
+  CardanoAssetDenomTrace[]
+> {
+  try {
+    const response = await axios.get<CardanoAssetDenomTrace[]>(
+      '/api/cardano/trace-registry',
+    );
+    return response.data;
   } catch (error) {
     const errorMessage = getGatewayErrorMessage(error);
     toast.error(errorMessage, { theme: 'colored' });
@@ -223,13 +478,106 @@ export async function planTransferRoute(params: {
   fromChainId: string;
   toChainId: string;
   tokenDenom: string;
+  expectedChainPath?: string[];
 }): Promise<TransferPlanResponse | null> {
   try {
     return await cardanoPlannerClient.planTransferRoute({
       fromChainId: params.fromChainId,
       toChainId: params.toChainId,
       tokenDenom: params.tokenDenom,
+      expectedChainPath: params.expectedChainPath,
     });
+  } catch (error) {
+    const errorMessage = getGatewayErrorMessage(error);
+    toast.error(errorMessage, { theme: 'colored' });
+    return null;
+  }
+}
+
+export async function buildCheqdIcqTx(
+  params: CheqdIcqBuildParams,
+): Promise<CheqdIcqBuildResponse | null> {
+  try {
+    let data: Record<string, unknown>;
+    switch (params.kind) {
+      case 'didDoc':
+      case 'didDocVersionsMetadata':
+        data = {
+          source_channel: params.sourceChannel,
+          signer: params.signer,
+          timeout_height: params.timeoutHeight,
+          timeout_timestamp: params.timeoutTimestamp,
+          id: params.id,
+        };
+        break;
+      case 'didDocVersion':
+        data = {
+          source_channel: params.sourceChannel,
+          signer: params.signer,
+          timeout_height: params.timeoutHeight,
+          timeout_timestamp: params.timeoutTimestamp,
+          id: params.id,
+          version: params.version,
+        };
+        break;
+      case 'resource':
+      case 'resourceMetadata':
+        data = {
+          source_channel: params.sourceChannel,
+          signer: params.signer,
+          timeout_height: params.timeoutHeight,
+          timeout_timestamp: params.timeoutTimestamp,
+          collection_id: params.collectionId,
+          id: params.id,
+        };
+        break;
+      case 'latestResourceVersion':
+      case 'latestResourceVersionMetadata':
+        data = {
+          source_channel: params.sourceChannel,
+          signer: params.signer,
+          timeout_height: params.timeoutHeight,
+          timeout_timestamp: params.timeoutTimestamp,
+          collection_id: params.collectionId,
+          name: params.name,
+          resource_type: params.resourceType,
+        };
+        break;
+      default:
+        throw new Error(
+          `Unsupported cheqd ICQ kind: ${(params as CheqdIcqBuildParams).kind}`,
+        );
+    }
+
+    const response = await API({
+      method: 'POST',
+      url: CHEQD_ICQ_ENDPOINTS[params.kind],
+      data,
+    });
+    return response.data as CheqdIcqBuildResponse;
+  } catch (error) {
+    const errorMessage = getGatewayErrorMessage(error);
+    toast.error(errorMessage, { theme: 'colored' });
+    return null;
+  }
+}
+
+export async function pollCheqdIcqResult(
+  params: CheqdIcqResultParams,
+): Promise<CheqdIcqResultResponse | null> {
+  try {
+    const response = await API({
+      method: 'POST',
+      url: '/api/icq/cheqd/result',
+      data: {
+        tx_hash: params.txHash,
+        since_height: params.sinceHeight,
+        query_path: params.queryPath,
+        packet_data_hex: params.packetDataHex,
+        source_channel: params.sourceChannel,
+      },
+    });
+    return response.data as CheqdIcqResultResponse;
   } catch (error) {
     const errorMessage = getGatewayErrorMessage(error);
     toast.error(errorMessage, { theme: 'colored' });

@@ -30,6 +30,14 @@ type DeploymentConfig = {
             refUtxo: RefUtxo;
             scriptHash: string;
         };
+        mintPort: {
+            refUtxo: RefUtxo;
+            scriptHash: string;
+        };
+        mintTransferEscrowShard: {
+            refUtxo: RefUtxo;
+            scriptHash: string;
+        };
         mintConnectionStt: {
             scriptHash: string;
         };
@@ -46,7 +54,7 @@ type DeploymentConfig = {
         };
     };
 };
-export type CodecType = 'client' | 'connection' | 'channel' | 'host_state' | 'host_state_redeemer' | 'spendChannelRedeemer' | 'iBCModuleRedeemer' | 'mintVoucherRedeemer';
+export type CodecType = 'client' | 'connection' | 'channel' | 'transferEscrow' | 'host_state' | 'host_state_redeemer' | 'spendChannelRedeemer' | 'iBCModuleRedeemer' | 'mintVoucherRedeemer' | 'mintPortRedeemer' | 'transferEscrowShardRedeemer';
 export declare class LucidIbcAdapter {
     private readonly lucid;
     private readonly deployment;
@@ -80,6 +88,7 @@ export declare class LucidIbcAdapter {
     getClientTokenUnit(clientId: string): string;
     getConnectionTokenUnit(connectionId: bigint): [string, string];
     getChannelTokenUnit(channelId: bigint): [string, string];
+    private payTransferEscrowDelta;
     createUnsignedSendPacketEscrowTx(dto: any): TxBuilder;
     createUnsignedSendPacketBurnTx(dto: any): TxBuilder;
     private generateTokenName;

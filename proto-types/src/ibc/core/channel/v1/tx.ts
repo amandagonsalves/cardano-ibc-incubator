@@ -48,13 +48,21 @@ export function responseResultTypeToJSON(object: ResponseResultType): string {
 /**
  * MsgChannelOpenInit defines an sdk.Msg to initialize a channel handshake. It
  * is called by a relayer on Chain A.
+ * @name MsgChannelOpenInit
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenInit
  */
 export interface MsgChannelOpenInit {
   port_id: string;
   channel: Channel;
   signer: string;
 }
-/** MsgChannelOpenInitResponse defines the Msg/ChannelOpenInit response type. */
+/**
+ * MsgChannelOpenInitResponse defines the Msg/ChannelOpenInit response type.
+ * @name MsgChannelOpenInitResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenInitResponse
+ */
 export interface MsgChannelOpenInitResponse {
   channel_id: string;
   version: string;
@@ -64,20 +72,32 @@ export interface MsgChannelOpenInitResponse {
  * MsgChannelOpenInit defines a msg sent by a Relayer to try to open a channel
  * on Chain B. The version field within the Channel field has been deprecated. Its
  * value will be ignored by core IBC.
+ * @name MsgChannelOpenTry
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenTry
  */
 export interface MsgChannelOpenTry {
   port_id: string;
-  /** Deprecated: this field is unused. Crossing hello's are no longer supported in core IBC. */
-  /** @deprecated */
+  /**
+   * Deprecated: this field is unused. Crossing hello's are no longer supported in core IBC.
+   * @deprecated
+   */
   previous_channel_id: string;
-  /** NOTE: the version field within the channel has been deprecated. Its value will be ignored by core IBC. */
+  /**
+   * NOTE: the version field within the channel has been deprecated. Its value will be ignored by core IBC.
+   */
   channel: Channel;
   counterparty_version: string;
   proof_init: Uint8Array;
   proof_height: Height;
   signer: string;
 }
-/** MsgChannelOpenTryResponse defines the Msg/ChannelOpenTry response type. */
+/**
+ * MsgChannelOpenTryResponse defines the Msg/ChannelOpenTry response type.
+ * @name MsgChannelOpenTryResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenTryResponse
+ */
 export interface MsgChannelOpenTryResponse {
   version: string;
   unsigned_tx?: Any;
@@ -85,6 +105,9 @@ export interface MsgChannelOpenTryResponse {
 /**
  * MsgChannelOpenAck defines a msg sent by a Relayer to Chain A to acknowledge
  * the change of channel state to TRYOPEN on Chain B.
+ * @name MsgChannelOpenAck
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenAck
  */
 export interface MsgChannelOpenAck {
   port_id: string;
@@ -95,13 +118,21 @@ export interface MsgChannelOpenAck {
   proof_height: Height;
   signer: string;
 }
-/** MsgChannelOpenAckResponse defines the Msg/ChannelOpenAck response type. */
+/**
+ * MsgChannelOpenAckResponse defines the Msg/ChannelOpenAck response type.
+ * @name MsgChannelOpenAckResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenAckResponse
+ */
 export interface MsgChannelOpenAckResponse {
   unsigned_tx?: Any;
 }
 /**
  * MsgChannelOpenConfirm defines a msg sent by a Relayer to Chain B to
  * acknowledge the change of channel state to OPEN on Chain A.
+ * @name MsgChannelOpenConfirm
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenConfirm
  */
 export interface MsgChannelOpenConfirm {
   port_id: string;
@@ -113,6 +144,9 @@ export interface MsgChannelOpenConfirm {
 /**
  * MsgChannelOpenConfirmResponse defines the Msg/ChannelOpenConfirm response
  * type.
+ * @name MsgChannelOpenConfirmResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenConfirmResponse
  */
 export interface MsgChannelOpenConfirmResponse {
   unsigned_tx?: Any;
@@ -120,19 +154,30 @@ export interface MsgChannelOpenConfirmResponse {
 /**
  * MsgChannelCloseInit defines a msg sent by a Relayer to Chain A
  * to close a channel with Chain B.
+ * @name MsgChannelCloseInit
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelCloseInit
  */
 export interface MsgChannelCloseInit {
   port_id: string;
   channel_id: string;
   signer: string;
 }
-/** MsgChannelCloseInitResponse defines the Msg/ChannelCloseInit response type. */
+/**
+ * MsgChannelCloseInitResponse defines the Msg/ChannelCloseInit response type.
+ * @name MsgChannelCloseInitResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelCloseInitResponse
+ */
 export interface MsgChannelCloseInitResponse {
   unsigned_tx?: Any;
 }
 /**
  * MsgChannelCloseConfirm defines a msg sent by a Relayer to Chain B
  * to acknowledge the change of channel state to CLOSED on Chain A.
+ * @name MsgChannelCloseConfirm
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelCloseConfirm
  */
 export interface MsgChannelCloseConfirm {
   port_id: string;
@@ -144,23 +189,41 @@ export interface MsgChannelCloseConfirm {
 /**
  * MsgChannelCloseConfirmResponse defines the Msg/ChannelCloseConfirm response
  * type.
+ * @name MsgChannelCloseConfirmResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelCloseConfirmResponse
  */
 export interface MsgChannelCloseConfirmResponse {
   unsigned_tx?: Any;
 }
-/** MsgRecvPacket receives incoming IBC packet */
+/**
+ * MsgRecvPacket receives incoming IBC packet
+ * @name MsgRecvPacket
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgRecvPacket
+ */
 export interface MsgRecvPacket {
   packet: Packet;
   proof_commitment: Uint8Array;
   proof_height: Height;
   signer: string;
 }
-/** MsgRecvPacketResponse defines the Msg/RecvPacket response type. */
+/**
+ * MsgRecvPacketResponse defines the Msg/RecvPacket response type.
+ * @name MsgRecvPacketResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgRecvPacketResponse
+ */
 export interface MsgRecvPacketResponse {
   result: ResponseResultType;
   unsigned_tx?: Any;
 }
-/** MsgTimeout receives timed-out packet */
+/**
+ * MsgTimeout receives timed-out packet
+ * @name MsgTimeout
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTimeout
+ */
 export interface MsgTimeout {
   packet: Packet;
   proof_unreceived: Uint8Array;
@@ -168,12 +231,22 @@ export interface MsgTimeout {
   next_sequence_recv: bigint;
   signer: string;
 }
-/** MsgTimeoutResponse defines the Msg/Timeout response type. */
+/**
+ * MsgTimeoutResponse defines the Msg/Timeout response type.
+ * @name MsgTimeoutResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTimeoutResponse
+ */
 export interface MsgTimeoutResponse {
   result: ResponseResultType;
   unsigned_tx?: Any;
 }
-/** MsgTimeoutOnClose timed-out packet upon counterparty channel closure. */
+/**
+ * MsgTimeoutOnClose timed-out packet upon counterparty channel closure.
+ * @name MsgTimeoutOnClose
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTimeoutOnClose
+ */
 export interface MsgTimeoutOnClose {
   packet: Packet;
   proof_unreceived: Uint8Array;
@@ -182,12 +255,22 @@ export interface MsgTimeoutOnClose {
   next_sequence_recv: bigint;
   signer: string;
 }
-/** MsgTimeoutOnCloseResponse defines the Msg/TimeoutOnClose response type. */
+/**
+ * MsgTimeoutOnCloseResponse defines the Msg/TimeoutOnClose response type.
+ * @name MsgTimeoutOnCloseResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTimeoutOnCloseResponse
+ */
 export interface MsgTimeoutOnCloseResponse {
   result: ResponseResultType;
   unsigned_tx?: Any;
 }
-/** MsgAcknowledgement receives incoming IBC acknowledgement */
+/**
+ * MsgAcknowledgement receives incoming IBC acknowledgement
+ * @name MsgAcknowledgement
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgAcknowledgement
+ */
 export interface MsgAcknowledgement {
   packet: Packet;
   acknowledgement: Uint8Array;
@@ -195,12 +278,22 @@ export interface MsgAcknowledgement {
   proof_height: Height;
   signer: string;
 }
-/** MsgAcknowledgementResponse defines the Msg/Acknowledgement response type. */
+/**
+ * MsgAcknowledgementResponse defines the Msg/Acknowledgement response type.
+ * @name MsgAcknowledgementResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgAcknowledgementResponse
+ */
 export interface MsgAcknowledgementResponse {
   result: ResponseResultType;
   unsigned_tx?: Any;
 }
-/** MsgTransfer send packet */
+/**
+ * MsgTransfer send packet
+ * @name MsgTransfer
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTransfer
+ */
 export interface MsgTransfer {
   source_port: string;
   source_channel: string;
@@ -212,24 +305,14 @@ export interface MsgTransfer {
   memo: string;
   signer: string;
 }
-/** MsgTransferResponse defines the Msg/Transfer response type. */
+/**
+ * MsgTransferResponse defines the Msg/Transfer response type.
+ * @name MsgTransferResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTransferResponse
+ */
 export interface MsgTransferResponse {
   result: ResponseResultType;
-  unsigned_tx?: Any;
-}
-/**
- * MsgChannelOpenConfirm defines a msg sent by a Relayer to Chain B to
- * acknowledge the change of channel state to OPEN on Chain A.
- */
-export interface MsgTimeoutRefresh {
-  channel_id: string;
-  signer: string;
-}
-/**
- * MsgChannelOpenConfirmResponse defines the Msg/ChannelOpenConfirm response
- * type.
- */
-export interface MsgTimeoutRefreshResponse {
   unsigned_tx?: Any;
 }
 function createBaseMsgChannelOpenInit(): MsgChannelOpenInit {
@@ -239,6 +322,13 @@ function createBaseMsgChannelOpenInit(): MsgChannelOpenInit {
     signer: "",
   };
 }
+/**
+ * MsgChannelOpenInit defines an sdk.Msg to initialize a channel handshake. It
+ * is called by a relayer on Chain A.
+ * @name MsgChannelOpenInit
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenInit
+ */
 export const MsgChannelOpenInit = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelOpenInit",
   encode(message: MsgChannelOpenInit, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -308,6 +398,12 @@ function createBaseMsgChannelOpenInitResponse(): MsgChannelOpenInitResponse {
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgChannelOpenInitResponse defines the Msg/ChannelOpenInit response type.
+ * @name MsgChannelOpenInitResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenInitResponse
+ */
 export const MsgChannelOpenInitResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelOpenInitResponse",
   encode(message: MsgChannelOpenInitResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -383,6 +479,14 @@ function createBaseMsgChannelOpenTry(): MsgChannelOpenTry {
     signer: "",
   };
 }
+/**
+ * MsgChannelOpenInit defines a msg sent by a Relayer to try to open a channel
+ * on Chain B. The version field within the Channel field has been deprecated. Its
+ * value will be ignored by core IBC.
+ * @name MsgChannelOpenTry
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenTry
+ */
 export const MsgChannelOpenTry = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelOpenTry",
   encode(message: MsgChannelOpenTry, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -493,6 +597,12 @@ function createBaseMsgChannelOpenTryResponse(): MsgChannelOpenTryResponse {
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgChannelOpenTryResponse defines the Msg/ChannelOpenTry response type.
+ * @name MsgChannelOpenTryResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenTryResponse
+ */
 export const MsgChannelOpenTryResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelOpenTryResponse",
   encode(message: MsgChannelOpenTryResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -559,6 +669,13 @@ function createBaseMsgChannelOpenAck(): MsgChannelOpenAck {
     signer: "",
   };
 }
+/**
+ * MsgChannelOpenAck defines a msg sent by a Relayer to Chain A to acknowledge
+ * the change of channel state to TRYOPEN on Chain B.
+ * @name MsgChannelOpenAck
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenAck
+ */
 export const MsgChannelOpenAck = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelOpenAck",
   encode(message: MsgChannelOpenAck, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -667,6 +784,12 @@ function createBaseMsgChannelOpenAckResponse(): MsgChannelOpenAckResponse {
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgChannelOpenAckResponse defines the Msg/ChannelOpenAck response type.
+ * @name MsgChannelOpenAckResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenAckResponse
+ */
 export const MsgChannelOpenAckResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelOpenAckResponse",
   encode(message: MsgChannelOpenAckResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -722,6 +845,13 @@ function createBaseMsgChannelOpenConfirm(): MsgChannelOpenConfirm {
     signer: "",
   };
 }
+/**
+ * MsgChannelOpenConfirm defines a msg sent by a Relayer to Chain B to
+ * acknowledge the change of channel state to OPEN on Chain A.
+ * @name MsgChannelOpenConfirm
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenConfirm
+ */
 export const MsgChannelOpenConfirm = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelOpenConfirm",
   encode(message: MsgChannelOpenConfirm, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -810,6 +940,13 @@ function createBaseMsgChannelOpenConfirmResponse(): MsgChannelOpenConfirmRespons
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgChannelOpenConfirmResponse defines the Msg/ChannelOpenConfirm response
+ * type.
+ * @name MsgChannelOpenConfirmResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelOpenConfirmResponse
+ */
 export const MsgChannelOpenConfirmResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelOpenConfirmResponse",
   encode(message: MsgChannelOpenConfirmResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -863,6 +1000,13 @@ function createBaseMsgChannelCloseInit(): MsgChannelCloseInit {
     signer: "",
   };
 }
+/**
+ * MsgChannelCloseInit defines a msg sent by a Relayer to Chain A
+ * to close a channel with Chain B.
+ * @name MsgChannelCloseInit
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelCloseInit
+ */
 export const MsgChannelCloseInit = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelCloseInit",
   encode(message: MsgChannelCloseInit, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -927,6 +1071,12 @@ function createBaseMsgChannelCloseInitResponse(): MsgChannelCloseInitResponse {
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgChannelCloseInitResponse defines the Msg/ChannelCloseInit response type.
+ * @name MsgChannelCloseInitResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelCloseInitResponse
+ */
 export const MsgChannelCloseInitResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelCloseInitResponse",
   encode(message: MsgChannelCloseInitResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -982,6 +1132,13 @@ function createBaseMsgChannelCloseConfirm(): MsgChannelCloseConfirm {
     signer: "",
   };
 }
+/**
+ * MsgChannelCloseConfirm defines a msg sent by a Relayer to Chain B
+ * to acknowledge the change of channel state to CLOSED on Chain A.
+ * @name MsgChannelCloseConfirm
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelCloseConfirm
+ */
 export const MsgChannelCloseConfirm = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelCloseConfirm",
   encode(message: MsgChannelCloseConfirm, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1070,6 +1227,13 @@ function createBaseMsgChannelCloseConfirmResponse(): MsgChannelCloseConfirmRespo
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgChannelCloseConfirmResponse defines the Msg/ChannelCloseConfirm response
+ * type.
+ * @name MsgChannelCloseConfirmResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgChannelCloseConfirmResponse
+ */
 export const MsgChannelCloseConfirmResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgChannelCloseConfirmResponse",
   encode(
@@ -1127,6 +1291,12 @@ function createBaseMsgRecvPacket(): MsgRecvPacket {
     signer: "",
   };
 }
+/**
+ * MsgRecvPacket receives incoming IBC packet
+ * @name MsgRecvPacket
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgRecvPacket
+ */
 export const MsgRecvPacket = {
   typeUrl: "/ibc.core.channel.v1.MsgRecvPacket",
   encode(message: MsgRecvPacket, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1209,6 +1379,12 @@ function createBaseMsgRecvPacketResponse(): MsgRecvPacketResponse {
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgRecvPacketResponse defines the Msg/RecvPacket response type.
+ * @name MsgRecvPacketResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgRecvPacketResponse
+ */
 export const MsgRecvPacketResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgRecvPacketResponse",
   encode(message: MsgRecvPacketResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1271,6 +1447,12 @@ function createBaseMsgTimeout(): MsgTimeout {
     signer: "",
   };
 }
+/**
+ * MsgTimeout receives timed-out packet
+ * @name MsgTimeout
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTimeout
+ */
 export const MsgTimeout = {
   typeUrl: "/ibc.core.channel.v1.MsgTimeout",
   encode(message: MsgTimeout, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1366,6 +1548,12 @@ function createBaseMsgTimeoutResponse(): MsgTimeoutResponse {
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgTimeoutResponse defines the Msg/Timeout response type.
+ * @name MsgTimeoutResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTimeoutResponse
+ */
 export const MsgTimeoutResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgTimeoutResponse",
   encode(message: MsgTimeoutResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1429,6 +1617,12 @@ function createBaseMsgTimeoutOnClose(): MsgTimeoutOnClose {
     signer: "",
   };
 }
+/**
+ * MsgTimeoutOnClose timed-out packet upon counterparty channel closure.
+ * @name MsgTimeoutOnClose
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTimeoutOnClose
+ */
 export const MsgTimeoutOnClose = {
   typeUrl: "/ibc.core.channel.v1.MsgTimeoutOnClose",
   encode(message: MsgTimeoutOnClose, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1536,6 +1730,12 @@ function createBaseMsgTimeoutOnCloseResponse(): MsgTimeoutOnCloseResponse {
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgTimeoutOnCloseResponse defines the Msg/TimeoutOnClose response type.
+ * @name MsgTimeoutOnCloseResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTimeoutOnCloseResponse
+ */
 export const MsgTimeoutOnCloseResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgTimeoutOnCloseResponse",
   encode(message: MsgTimeoutOnCloseResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1600,6 +1800,12 @@ function createBaseMsgAcknowledgement(): MsgAcknowledgement {
     signer: "",
   };
 }
+/**
+ * MsgAcknowledgement receives incoming IBC acknowledgement
+ * @name MsgAcknowledgement
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgAcknowledgement
+ */
 export const MsgAcknowledgement = {
   typeUrl: "/ibc.core.channel.v1.MsgAcknowledgement",
   encode(message: MsgAcknowledgement, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1694,6 +1900,12 @@ function createBaseMsgAcknowledgementResponse(): MsgAcknowledgementResponse {
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgAcknowledgementResponse defines the Msg/Acknowledgement response type.
+ * @name MsgAcknowledgementResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgAcknowledgementResponse
+ */
 export const MsgAcknowledgementResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgAcknowledgementResponse",
   encode(message: MsgAcknowledgementResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1762,6 +1974,12 @@ function createBaseMsgTransfer(): MsgTransfer {
     signer: "",
   };
 }
+/**
+ * MsgTransfer send packet
+ * @name MsgTransfer
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTransfer
+ */
 export const MsgTransfer = {
   typeUrl: "/ibc.core.channel.v1.MsgTransfer",
   encode(message: MsgTransfer, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1889,6 +2107,12 @@ function createBaseMsgTransferResponse(): MsgTransferResponse {
     unsigned_tx: undefined,
   };
 }
+/**
+ * MsgTransferResponse defines the Msg/Transfer response type.
+ * @name MsgTransferResponse
+ * @package ibc.core.channel.v1
+ * @see proto type: ibc.core.channel.v1.MsgTransferResponse
+ */
 export const MsgTransferResponse = {
   typeUrl: "/ibc.core.channel.v1.MsgTransferResponse",
   encode(message: MsgTransferResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
@@ -1942,113 +2166,6 @@ export const MsgTransferResponse = {
     return message;
   },
 };
-function createBaseMsgTimeoutRefresh(): MsgTimeoutRefresh {
-  return {
-    channel_id: "",
-    signer: "",
-  };
-}
-export const MsgTimeoutRefresh = {
-  typeUrl: "/ibc.core.channel.v1.MsgTimeoutRefresh",
-  encode(message: MsgTimeoutRefresh, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
-    if (message.channel_id !== "") {
-      writer.uint32(10).string(message.channel_id);
-    }
-    if (message.signer !== "") {
-      writer.uint32(18).string(message.signer);
-    }
-    return writer;
-  },
-  decode(input: BinaryReader | Uint8Array, length?: number): MsgTimeoutRefresh {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    let end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseMsgTimeoutRefresh();
-    while (reader.pos < end) {
-      const tag = reader.uint32();
-      switch (tag >>> 3) {
-        case 1:
-          message.channel_id = reader.string();
-          break;
-        case 2:
-          message.signer = reader.string();
-          break;
-        default:
-          reader.skipType(tag & 7);
-          break;
-      }
-    }
-    return message;
-  },
-  fromJSON(object: any): MsgTimeoutRefresh {
-    const obj = createBaseMsgTimeoutRefresh();
-    if (isSet(object.channel_id)) obj.channel_id = String(object.channel_id);
-    if (isSet(object.signer)) obj.signer = String(object.signer);
-    return obj;
-  },
-  toJSON(message: MsgTimeoutRefresh): unknown {
-    const obj: any = {};
-    message.channel_id !== undefined && (obj.channel_id = message.channel_id);
-    message.signer !== undefined && (obj.signer = message.signer);
-    return obj;
-  },
-  fromPartial<I extends Exact<DeepPartial<MsgTimeoutRefresh>, I>>(object: I): MsgTimeoutRefresh {
-    const message = createBaseMsgTimeoutRefresh();
-    message.channel_id = object.channel_id ?? "";
-    message.signer = object.signer ?? "";
-    return message;
-  },
-};
-function createBaseMsgTimeoutRefreshResponse(): MsgTimeoutRefreshResponse {
-  return {
-    unsigned_tx: undefined,
-  };
-}
-export const MsgTimeoutRefreshResponse = {
-  typeUrl: "/ibc.core.channel.v1.MsgTimeoutRefreshResponse",
-  encode(message: MsgTimeoutRefreshResponse, writer: BinaryWriter = BinaryWriter.create()): BinaryWriter {
-    if (message.unsigned_tx !== undefined) {
-      Any.encode(message.unsigned_tx, writer.uint32(10).fork()).ldelim();
-    }
-    return writer;
-  },
-  decode(input: BinaryReader | Uint8Array, length?: number): MsgTimeoutRefreshResponse {
-    const reader = input instanceof BinaryReader ? input : new BinaryReader(input);
-    let end = length === undefined ? reader.len : reader.pos + length;
-    const message = createBaseMsgTimeoutRefreshResponse();
-    while (reader.pos < end) {
-      const tag = reader.uint32();
-      switch (tag >>> 3) {
-        case 1:
-          message.unsigned_tx = Any.decode(reader, reader.uint32());
-          break;
-        default:
-          reader.skipType(tag & 7);
-          break;
-      }
-    }
-    return message;
-  },
-  fromJSON(object: any): MsgTimeoutRefreshResponse {
-    const obj = createBaseMsgTimeoutRefreshResponse();
-    if (isSet(object.unsigned_tx)) obj.unsigned_tx = Any.fromJSON(object.unsigned_tx);
-    return obj;
-  },
-  toJSON(message: MsgTimeoutRefreshResponse): unknown {
-    const obj: any = {};
-    message.unsigned_tx !== undefined &&
-      (obj.unsigned_tx = message.unsigned_tx ? Any.toJSON(message.unsigned_tx) : undefined);
-    return obj;
-  },
-  fromPartial<I extends Exact<DeepPartial<MsgTimeoutRefreshResponse>, I>>(
-    object: I,
-  ): MsgTimeoutRefreshResponse {
-    const message = createBaseMsgTimeoutRefreshResponse();
-    if (object.unsigned_tx !== undefined && object.unsigned_tx !== null) {
-      message.unsigned_tx = Any.fromPartial(object.unsigned_tx);
-    }
-    return message;
-  },
-};
 /** Msg defines the ibc/channel Msg service. */
 export interface Msg {
   /** ChannelOpenInit defines a rpc handler method for MsgChannelOpenInit. */
@@ -2076,8 +2193,6 @@ export interface Msg {
   Acknowledgement(request: MsgAcknowledgement): Promise<MsgAcknowledgementResponse>;
   /** Transfer defines a rpc handler method for MsgTransfer. */
   Transfer(request: MsgTransfer): Promise<MsgTransferResponse>;
-  /** TimeoutRefresh defines a rpc handler method for MsgTimeoutRefresh. */
-  TimeoutRefresh(request: MsgTimeoutRefresh): Promise<MsgTimeoutRefreshResponse>;
 }
 export class MsgClientImpl implements Msg {
   private readonly rpc: Rpc;
@@ -2094,7 +2209,6 @@ export class MsgClientImpl implements Msg {
     this.TimeoutOnClose = this.TimeoutOnClose.bind(this);
     this.Acknowledgement = this.Acknowledgement.bind(this);
     this.Transfer = this.Transfer.bind(this);
-    this.TimeoutRefresh = this.TimeoutRefresh.bind(this);
   }
   ChannelOpenInit(request: MsgChannelOpenInit): Promise<MsgChannelOpenInitResponse> {
     const data = MsgChannelOpenInit.encode(request).finish();
@@ -2151,9 +2265,7 @@ export class MsgClientImpl implements Msg {
     const promise = this.rpc.request("ibc.core.channel.v1.Msg", "Transfer", data);
     return promise.then((data) => MsgTransferResponse.decode(new BinaryReader(data)));
   }
-  TimeoutRefresh(request: MsgTimeoutRefresh): Promise<MsgTimeoutRefreshResponse> {
-    const data = MsgTimeoutRefresh.encode(request).finish();
-    const promise = this.rpc.request("ibc.core.channel.v1.Msg", "TimeoutRefresh", data);
-    return promise.then((data) => MsgTimeoutRefreshResponse.decode(new BinaryReader(data)));
-  }
 }
+export const createClientImpl = (rpc: Rpc) => {
+  return new MsgClientImpl(rpc);
+};

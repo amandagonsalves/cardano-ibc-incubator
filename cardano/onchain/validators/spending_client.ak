@@ -1,6 +1,5 @@
-use aiken/collection/list
 use cardano/assets.{PolicyId}
-use cardano/transaction.{Input, Output, OutputReference, Transaction}
+use cardano/transaction.{Input, OutputReference, Transaction}
 use ibc/auth
 use ibc/client/ics_007_tendermint_client/client_datum.{
   ClientDatum, ClientDatumState,
@@ -25,7 +24,9 @@ validator spend_client(host_state_nft_policy_id: PolicyId) {
   ) {
     let Transaction { outputs, inputs, validity_range, .. } = transaction
 
-    // Any client state update must be committed into the HostState root in the same transaction.
+    // Any client state update must be committed into the HostState root in the
+    // same transaction. HostState validates its own redeemer branch, so the
+    // client validator only needs to require the canonical HostState thread.
     expect _ =
       validator_utils.require_host_state_thread(
         inputs,
@@ -39,15 +40,18 @@ validator spend_client(host_state_nft_policy_id: PolicyId) {
     //========================valid input=======================
     // input contains client token
     expect Some(datum) = datum
-    expect spent_output |> auth.contain_auth_token(datum.token)
+    expect auth.contain_auth_token(spent_output, datum.token)
 
     //========================valid output=======================
-    expect [updated_output] =
-      outputs
-        |> list.filter(fn(output) { output.address == spent_output.address })
+    let updated_output =
+      validator_utils.find_unique_continuation_output(
+        spent_output,
+        outputs,
+        datum.token,
+      )
 
     // output contains client token
-    expect updated_output |> auth.contains_only_auth_tokens([datum.token])
+    expect auth.contains_only_auth_tokens(updated_output, [datum.token])
 
     // TODO: add verify header
     // output datum is updated correctly

@@ -6,8 +6,12 @@ const CARDANO_POLICY_ID_HEX_LENGTH = 56;
 const QUERY_CHANNELS_PREFIX_URL = '/ibc/core/channel/v1/channels';
 const QUERY_ALL_CHANNELS_URL =
   `${QUERY_CHANNELS_PREFIX_URL}?pagination.count_total=true&pagination.limit=10000`;
+const QUERY_CARDANO_CHANNELS_URL =
+  '/api/channels?offset=0&limit=10000&countTotal=true&reverse=false';
 const QUERY_ALL_DENOMS_URL = '/ibc/apps/transfer/v1/denoms';
 const QUERY_PACKET_FORWARD_PARAMS_URL = '/ibc/apps/packetforward/v1/params';
+const QUERY_CONSENSUS_STATES_PREFIX_URL =
+  '/ibc/core/client/v1/consensus_states';
 const QUERY_SWAP_ROUTER_STATE =
   '/cosmwasm/wasm/v1/contract/SWAP_ROUTER_ADDRESS/state?pagination.limit=100000000';
 const SWAP_ROUTING_TABLE_PREFIX = '\x00\rrouting_table\x00D';
@@ -27,6 +31,22 @@ export type TransferPlanRequest = {
   fromChainId: string;
   toChainId: string;
   tokenDenom: string;
+  expectedChainPath?: string[];
+};
+
+export type MissingTransferRouteHop = {
+  fromChainId: string;
+  toChainId: string;
+  reason:
+    | 'no-outbound-channel'
+    | 'no-channel-to-destination'
+    | 'blocked-by-visited-chain';
+  availableDestChainIds: string[];
+};
+
+export type TransferRouteDiagnostics = {
+  expectedChainPath: string[];
+  missingHops: MissingTransferRouteHop[];
 };
 
 export type TransferPlanResponse = {
@@ -53,6 +73,7 @@ export type TransferPlanResponse = {
     | 'no-outbound-channels'
     | 'no-route-found';
   failureMessage?: string;
+  routeDiagnostics?: TransferRouteDiagnostics;
 };
 
 export type SwapOptionToken = {
@@ -90,13 +111,22 @@ export type SwapEstimateResponse = {
 
 export type PlannerClientConfig = {
   cardanoChainId: string;
+  cardanoRestEndpoint?: string;
   entrypointRestEndpoint: string;
   localOsmosisRestEndpoint: string;
   swapRouterAddress?: string;
+  preferredChannels?: PreferredChannel[];
   resolveCardanoAssetDenomTrace?: (
     assetId: string,
   ) => Promise<ResolvedCardanoAssetTrace | null>;
   fetchImpl?: typeof fetch;
+};
+
+export type PreferredChannel = {
+  fromChainId: string;
+  toChainId: string;
+  srcPort: string;
+  srcChannel: string;
 };
 
 export type PlannerClient = {
@@ -119,11 +149,41 @@ type QueryChannelResponse = {
   };
 };
 
+type CardanoChannelHealthResponse = {
+  port_id: string;
+  channel_id: string;
+  status: 'available' | 'blocked';
+  reason?: string | null;
+  pending_packet_commitment_count?: string;
+  earliest_pending_packet_sequence?: string | null;
+  pending_packet_commitment_sequences?: string[];
+};
+
 type QueryClientStateResponse = {
   identified_client_state?: {
+    client_id?: string;
     client_state?: {
       chain_id?: string;
+      trusting_period?: string;
+      latest_height?: {
+        revision_number?: string;
+        revision_height?: string;
+      };
+      frozen_height?: {
+        revision_number?: string;
+        revision_height?: string;
+      };
     };
+  };
+};
+
+type QueryClientStatusResponse = {
+  status?: string;
+};
+
+type QueryConsensusStateResponse = {
+  consensus_state?: {
+    timestamp?: string;
   };
 };
 
@@ -235,29 +295,37 @@ export function createPlannerClient(
     | undefined;
 
   const getPlannerMetadata = async (): Promise<PlannerMetadata> => {
-    const [channels, entrypointDenomTraces, localOsmosisDenomTraces] =
-      await Promise.all([
-        fetchAllChannels(
-          ENTRYPOINT_CHAIN_ID,
-          resolvedConfig.entrypointRestEndpoint,
-          resolvedConfig.fetchImpl,
-        ),
-        fetchAllDenomTraces(
-          resolvedConfig.entrypointRestEndpoint,
-          resolvedConfig.fetchImpl,
-        ),
-        fetchAllDenomTraces(
-          resolvedConfig.localOsmosisRestEndpoint,
-          resolvedConfig.fetchImpl,
-        ),
-      ]);
+    const [channels, entrypointDenomTraces, counterpartyDenomTraces] = await Promise.all([
+      fetchAllChannels(
+        ENTRYPOINT_CHAIN_ID,
+        resolvedConfig.entrypointRestEndpoint,
+        resolvedConfig.fetchImpl,
+        {
+          cardanoChainId: resolvedConfig.cardanoChainId,
+          cardanoRestEndpoint: resolvedConfig.cardanoRestEndpoint,
+        },
+      ),
+      fetchAllDenomTraces(
+        resolvedConfig.entrypointRestEndpoint,
+        resolvedConfig.fetchImpl,
+      ),
+      fetchAllDenomTraces(
+        resolvedConfig.localOsmosisRestEndpoint,
+        resolvedConfig.fetchImpl,
+      ),
+    ]);
+
+    const adjacency = selectCanonicalChannels(
+      channels.adjacency,
+      resolvedConfig.preferredChannels || [],
+    );
 
     return {
-      adjacency: channels.adjacency,
+      adjacency,
       channelByRoute: channels.channelByRoute,
       denomTracesByChain: {
         [ENTRYPOINT_CHAIN_ID]: entrypointDenomTraces,
-        [LOCAL_OSMOSIS_CHAIN_ID]: localOsmosisDenomTraces,
+        [LOCAL_OSMOSIS_CHAIN_ID]: counterpartyDenomTraces,
       },
     };
   };
@@ -352,6 +420,7 @@ export function createPlannerClient(
         toChainId,
         metadata,
         new Set(unwind.chains),
+        request.expectedChainPath,
       );
 
       if (nativeForward.failure) {
@@ -363,6 +432,7 @@ export function createPlannerClient(
           tokenTrace,
           failureCode: nativeForward.failure.code,
           failureMessage: nativeForward.failure.message,
+          routeDiagnostics: nativeForward.failure.routeDiagnostics,
         };
       }
 
@@ -663,10 +733,15 @@ function resolveUniqueForwardRoute(
   toChainId: string,
   metadata: PlannerMetadata,
   initialVisited: Set<string>,
+  expectedChainPath?: string[],
 ): {
   chains: string[];
   routes: string[];
-  failure?: { code: TransferPlanResponse['failureCode']; message: string };
+  failure?: {
+    code: TransferPlanResponse['failureCode'];
+    message: string;
+    routeDiagnostics?: TransferRouteDiagnostics;
+  };
 } {
   if (fromChainId === toChainId) {
     return { chains: [fromChainId], routes: [] };
@@ -696,12 +771,22 @@ function resolveUniqueForwardRoute(
   }
 
   if (foundPaths.length === 0) {
+    const routeDiagnostics = diagnoseExpectedRouteHops(
+      metadata,
+      expectedChainPath,
+      initialVisited,
+    );
     return {
       chains: [fromChainId],
       routes: [],
       failure: {
         code: 'no-forward-route',
-        message: `No canonical transfer route exists from ${fromChainId} to ${toChainId}.`,
+        message: formatNoForwardRouteMessage(
+          fromChainId,
+          toChainId,
+          routeDiagnostics,
+        ),
+        routeDiagnostics,
       },
     };
   }
@@ -741,6 +826,184 @@ function resolveUniqueForwardRoute(
   return { chains, routes };
 }
 
+function diagnoseExpectedRouteHops(
+  metadata: PlannerMetadata,
+  expectedChainPath: string[] | undefined,
+  initialVisited: Set<string>,
+): TransferRouteDiagnostics | undefined {
+  const normalizedPath = (expectedChainPath || [])
+    .map((chainId) => chainId.trim())
+    .filter(Boolean);
+  if (normalizedPath.length < 2) {
+    return undefined;
+  }
+
+  const missingHops: MissingTransferRouteHop[] = [];
+  for (let index = 0; index < normalizedPath.length - 1; index += 1) {
+    const fromChainId = normalizedPath[index];
+    const toChainId = normalizedPath[index + 1];
+    const destinations = metadata.adjacency[fromChainId] || {};
+    const availableDestChainIds = Object.keys(destinations);
+
+    if (initialVisited.has(toChainId)) {
+      missingHops.push({
+        fromChainId,
+        toChainId,
+        reason: 'blocked-by-visited-chain',
+        availableDestChainIds,
+      });
+      continue;
+    }
+
+    if ((destinations[toChainId] || []).length > 0) {
+      continue;
+    }
+
+    missingHops.push({
+      fromChainId,
+      toChainId,
+      reason:
+        availableDestChainIds.length === 0
+          ? 'no-outbound-channel'
+          : 'no-channel-to-destination',
+      availableDestChainIds,
+    });
+  }
+
+  return missingHops.length
+    ? { expectedChainPath: normalizedPath, missingHops }
+    : undefined;
+}
+
+function formatNoForwardRouteMessage(
+  fromChainId: string,
+  toChainId: string,
+  diagnostics: TransferRouteDiagnostics | undefined,
+): string {
+  const base = `No canonical transfer route exists from ${fromChainId} to ${toChainId}.`;
+  if (!diagnostics?.missingHops.length) {
+    return base;
+  }
+
+  const missingHops = diagnostics.missingHops
+    .map((hop) => `${hop.fromChainId} -> ${hop.toChainId}`)
+    .join('; ');
+  return `${base} Missing live IBC transfer channel${
+    diagnostics.missingHops.length === 1 ? '' : 's'
+  } for: ${missingHops}.`;
+}
+
+function selectCanonicalChannels(
+  adjacency: PlannerMetadata['adjacency'],
+  preferredChannels: PreferredChannel[],
+): PlannerMetadata['adjacency'] {
+  const filtered: PlannerMetadata['adjacency'] = {};
+  for (const [srcChain, destinations] of Object.entries(adjacency)) {
+    filtered[srcChain] = {};
+    for (const [destChain, channels] of Object.entries(destinations)) {
+      const preferred = findPreferredChannel(
+        channels,
+        preferredChannels,
+        srcChain,
+        destChain,
+      );
+      const selected = preferred || selectLatestChannel(channels);
+      if (selected) {
+        // Channel IDs are deployment-local; prefer the newest live channel unless explicitly overridden.
+        filtered[srcChain][destChain] = [selected];
+      }
+    }
+  }
+
+  for (const preferred of preferredChannels) {
+    const channels = adjacency[preferred.fromChainId]?.[preferred.toChainId] || [];
+    const match = findMatchingPreferredChannel(channels, preferred);
+    if (!match) {
+      continue;
+    }
+
+    filtered[preferred.fromChainId][preferred.toChainId] = [match];
+
+    const reverse = filtered[match.destChain]?.[match.srcChain]?.find(
+      (channel) =>
+        channel.srcPort === match.destPort &&
+        channel.srcChannel === match.destChannel,
+    );
+    if (reverse) {
+      filtered[match.destChain][match.srcChain] = [reverse];
+    }
+  }
+
+  return filtered;
+}
+
+function findPreferredChannel(
+  channels: OpenChannel[],
+  preferredChannels: PreferredChannel[],
+  fromChainId: string,
+  toChainId: string,
+): OpenChannel | undefined {
+  const preferred = preferredChannels.find(
+    (channel) =>
+      channel.fromChainId === fromChainId && channel.toChainId === toChainId,
+  );
+  return preferred ? findMatchingPreferredChannel(channels, preferred) : undefined;
+}
+
+function findMatchingPreferredChannel(
+  channels: OpenChannel[],
+  preferred: PreferredChannel,
+): OpenChannel | undefined {
+  return channels.find(
+    (channel) =>
+      channel.srcPort === preferred.srcPort &&
+      channel.srcChannel === preferred.srcChannel,
+  );
+}
+
+function selectLatestChannel(channels: OpenChannel[]): OpenChannel | undefined {
+  return channels.reduce<OpenChannel | undefined>((selected, channel) => {
+    if (!selected) {
+      return channel;
+    }
+    return compareChannelPriority(channel, selected) > 0 ? channel : selected;
+  }, undefined);
+}
+
+function compareChannelPriority(a: OpenChannel, b: OpenChannel): number {
+  const channelComparison = compareChannelId(a.srcChannel, b.srcChannel);
+  if (channelComparison !== 0) {
+    return channelComparison;
+  }
+
+  const portComparison = a.srcPort.localeCompare(b.srcPort);
+  if (portComparison !== 0) {
+    return portComparison;
+  }
+
+  return a.destChannel.localeCompare(b.destChannel);
+}
+
+function compareChannelId(a: string, b: string): number {
+  const aSequence = parseChannelSequence(a);
+  const bSequence = parseChannelSequence(b);
+  if (aSequence !== undefined && bSequence !== undefined) {
+    return aSequence === bSequence ? 0 : aSequence > bSequence ? 1 : -1;
+  }
+  if (aSequence !== undefined) {
+    return 1;
+  }
+  if (bSequence !== undefined) {
+    return -1;
+  }
+  return a.localeCompare(b);
+}
+
+function parseChannelSequence(channelId: string): bigint | undefined {
+  const match = /^channel-(\d+)$/.exec(channelId);
+  return match ? BigInt(match[1]) : undefined;
+}
+
 function parseHops(path: string): Array<{ port: string; channel: string }> {
   if (!path) {
     return [];
@@ -774,13 +1037,17 @@ async function fetchAllDenomTraces(
     const url = nextKey
       ? `${baseUrl}&pagination.key=${encodeURIComponent(nextKey)}`
       : baseUrl;
-    const data = await fetchJson<{
+    const data = await fetchOptionalJson<{
       denoms?: Array<{
         base: string;
         trace?: Array<{ port_id: string; channel_id: string }>;
       }>;
       pagination?: { next_key?: string };
-    }>(url, fetchImpl);
+    }>(url, fetchImpl, [404, 501]);
+
+    if (!data) {
+      return traces;
+    }
 
     for (const denom of data.denoms || []) {
       const path = stringifyTrace(denom.trace || []);
@@ -808,6 +1075,10 @@ async function fetchAllChannels(
   chainId: string,
   restUrl: string,
   fetchImpl: typeof fetch,
+  options: {
+    cardanoChainId?: string;
+    cardanoRestEndpoint?: string;
+  } = {},
 ): Promise<Pick<PlannerMetadata, 'adjacency' | 'channelByRoute'>> {
   const openChannels: OpenChannel[] = [];
   let nextKey: string | undefined;
@@ -832,6 +1103,10 @@ async function fetchAllChannels(
         channel.port_id,
         fetchImpl,
       );
+      if (!(await isUsableChannelClient(restUrl, clientState, fetchImpl))) {
+        continue;
+      }
+
       const destChain = clientState.identified_client_state?.client_state?.chain_id;
       if (!destChain) {
         continue;
@@ -850,6 +1125,10 @@ async function fetchAllChannels(
     nextKey = data.pagination?.next_key;
   } while (nextKey);
 
+  const cardanoChannels =
+    options.cardanoRestEndpoint && options.cardanoChainId
+      ? await fetchCardanoOpenChannels(options.cardanoRestEndpoint, fetchImpl)
+      : undefined;
   const adjacency: PlannerMetadata['adjacency'] = {};
   const channelByRoute: PlannerMetadata['channelByRoute'] = {};
 
@@ -862,6 +1141,17 @@ async function fetchAllChannels(
   };
 
   for (const channel of openChannels) {
+    if (
+      cardanoChannels &&
+      options.cardanoChainId &&
+      channel.srcChain === ENTRYPOINT_CHAIN_ID &&
+      channel.destChain === options.cardanoChainId &&
+      !hasReciprocalCardanoChannel(channel, cardanoChannels)
+    ) {
+      // Cardano can retain stale channel UTxOs; only route through pairs that point back.
+      continue;
+    }
+
     insert(channel);
     insert({
       srcChain: channel.destChain,
@@ -876,6 +1166,32 @@ async function fetchAllChannels(
   return { adjacency, channelByRoute };
 }
 
+async function fetchCardanoOpenChannels(
+  restUrl: string,
+  fetchImpl: typeof fetch,
+): Promise<QueryChannelResponse[]> {
+  const data = await fetchJson<{
+    channels?: QueryChannelResponse[];
+  }>(`${trimTrailingSlash(restUrl)}${QUERY_CARDANO_CHANNELS_URL}`, fetchImpl);
+
+  return (data.channels || []).filter((channel) =>
+    isOpenChannelState(channel.state),
+  );
+}
+
+function hasReciprocalCardanoChannel(
+  entrypointChannel: OpenChannel,
+  cardanoChannels: QueryChannelResponse[],
+): boolean {
+  return cardanoChannels.some(
+    (cardanoChannel) =>
+      cardanoChannel.port_id === entrypointChannel.destPort &&
+      cardanoChannel.channel_id === entrypointChannel.destChannel &&
+      cardanoChannel.counterparty.port_id === entrypointChannel.srcPort &&
+      cardanoChannel.counterparty.channel_id === entrypointChannel.srcChannel,
+  );
+}
+
 async function fetchClientStateFromChannel(
   restUrl: string,
   channelId: string,
@@ -884,6 +1200,34 @@ async function fetchClientStateFromChannel(
 ): Promise<QueryClientStateResponse> {
   const url = `${restUrl}${QUERY_CHANNELS_PREFIX_URL}/${channelId}/ports/${portId}/client_state`;
   return fetchJson<QueryClientStateResponse>(url, fetchImpl);
+}
+
+async function isUsableChannelClient(
+  restUrl: string,
+  clientState: QueryClientStateResponse,
+  fetchImpl: typeof fetch,
+): Promise<boolean> {
+  const frozenHeight =
+    clientState.identified_client_state?.client_state?.frozen_height;
+  if (isNonZeroHeight(frozenHeight)) {
+    return false;
+  }
+
+  const clientId = clientState.identified_client_state?.client_id;
+  if (!clientId) {
+    return true;
+  }
+
+  try {
+    const status = await fetchJson<QueryClientStatusResponse>(
+      `${restUrl}/ibc/core/client/v1/client_status/${clientId}`,
+      fetchImpl,
+    );
+    const normalizedStatus = status.status?.toLowerCase();
+    return normalizedStatus !== 'expired' && normalizedStatus !== 'frozen';
+  } catch {
+    return true;
+  }
 }
 
 async function buildSwapMetadata(config: PlannerConfig): Promise<SwapMetadata> {
@@ -1645,6 +1989,27 @@ function isOpenChannelState(state: string | number | undefined): boolean {
   return state === 'STATE_OPEN' || state === 'OPEN' || state === 'Open' || state === 3 || state === '3';
 }
 
+function isNonZeroHeight(height: {
+  revision_number?: string;
+  revision_height?: string;
+} | undefined): boolean {
+  if (!height) {
+    return false;
+  }
+
+  return [height.revision_number, height.revision_height].some((value) => {
+    if (!value) {
+      return false;
+    }
+
+    try {
+      return BigInt(value) !== BIGINT_ZERO;
+    } catch {
+      return value !== '0';
+    }
+  });
+}
+
 async function fetchJson<T>(
   url: string,
   fetchImpl: typeof fetch,
@@ -1656,6 +2021,27 @@ async function fetchJson<T>(
     );
   }
   return (await response.json()) as T;
+}
+
+async function fetchOptionalJson<T>(
+  url: string,
+  fetchImpl: typeof fetch,
+  optionalStatuses: number[],
+): Promise<T | null> {
+  const response = await fetchImpl(url);
+  if (optionalStatuses.includes(response.status)) {
+    return null;
+  }
+  if (!response.ok) {
+    throw new Error(
+      `Request failed for ${url}: ${response.status} ${response.statusText}`,
+    );
+  }
+  return (await response.json()) as T;
+}
+
+function trimTrailingSlash(value: string): string {
+  return value.replace(/\/+$/, '');
 }
 
 function getMaxChannelId(channel1: string, channel2: string): string {

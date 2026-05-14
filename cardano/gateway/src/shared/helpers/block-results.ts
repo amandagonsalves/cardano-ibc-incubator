@@ -1,5 +1,6 @@
 import { Event, EventAttribute, ResponseDeliverTx } from '@plus/proto-types/build/ibc/core/types/v1/block';
 import {
+  EVENT_TYPE_CLIENT,
   EVENT_TYPE_CONNECTION,
   ATTRIBUTE_KEY_CONNECTION,
   EVENT_TYPE_CHANNEL,
@@ -20,12 +21,15 @@ import { convertHex2String, toHex } from './hex';
 import { SpendChannelRedeemer } from '../types/channel/channel-redeemer';
 import { Packet } from '../types/channel/packet';
 import { IBCModuleCallback, IBCModuleRedeemer } from '../types/port/ibc_module_redeemer';
-import { Acknowledgement } from '@plus/proto-types/build/ibc/core/channel/v1/channel';
 import { AcknowledgementResponse } from '../types/channel/acknowledgement_response';
 import { SpendClientRedeemer } from '../types/client-redeemer';
 import { convertHeaderToTendermint } from '../types/header';
-import { Header } from '@plus/proto-types/build/ibc/lightclients/tendermint/v1/tendermint';
+import {
+  Header,
+  Misbehaviour as MisbehaviourMsg,
+} from '@plus/proto-types/build/ibc/lightclients/tendermint/v1/tendermint';
 import { Any } from '@plus/proto-types/build/google/protobuf/any';
+import { acknowledgementHexFromResponse, acknowledgementJsonFromResponse } from './acknowledgement';
 
 function normalizeEventConnection(evtType: ConnectionState): string {
   switch (evtType) {
@@ -147,17 +151,40 @@ export function normalizeTxsResultFromClientDatum(
 ): ResponseDeliverTx {
   const [latestHeight] = [...ClientDatum.state.consensusStates].at(-1);
   let header = '';
+  let clientMessageAnyHex = '';
+  let eventType = clientEvent;
+  let consensusHeight = latestHeight;
 
   if (spendClientRedeemer && spendClientRedeemer.hasOwnProperty('UpdateClient')) {
     const clientMessage = spendClientRedeemer['UpdateClient'].msg;
 
     if (clientMessage && clientMessage.hasOwnProperty('HeaderCase')) {
-      const msgUpdateClient = convertHeaderToTendermint(clientMessage['HeaderCase'][0]);
+      const updateHeader = clientMessage['HeaderCase'][0];
+      const msgUpdateClient = convertHeaderToTendermint(updateHeader);
       const headerAny: Any = {
         type_url: '/ibc.lightclients.tendermint.v1.Header',
         value: Header.encode(msgUpdateClient).finish(),
       };
-      header = toHex(Any.encode(headerAny).finish());
+      clientMessageAnyHex = toHex(Any.encode(headerAny).finish());
+      header = clientMessageAnyHex;
+      // Replayed update events must use the submitted header height, not map insertion order.
+      consensusHeight = {
+        revisionNumber: updateHeader.trustedHeight.revisionNumber,
+        revisionHeight: updateHeader.signedHeader.header.height,
+      };
+    } else if (clientMessage && clientMessage.hasOwnProperty('MisbehaviourCase')) {
+      const misbehaviour = clientMessage['MisbehaviourCase'][0];
+      const misbehaviourAny: Any = {
+        type_url: '/ibc.lightclients.tendermint.v1.Misbehaviour',
+        value: MisbehaviourMsg.encode({
+          client_id: misbehaviour.client_id,
+          header1: convertHeaderToTendermint(misbehaviour.header1),
+          header2: convertHeaderToTendermint(misbehaviour.header2),
+        }).finish(),
+      };
+      clientMessageAnyHex = toHex(Any.encode(misbehaviourAny).finish());
+      eventType = EVENT_TYPE_CLIENT.CLIENT_MISBEHAVIOR;
+      consensusHeight = ClientDatum.state.clientState.frozenHeight;
     }
   }
 
@@ -165,7 +192,7 @@ export function normalizeTxsResultFromClientDatum(
     code: 0,
     events: [
       {
-        type: clientEvent,
+        type: eventType,
         event_attribute: [
           {
             key: ATTRIBUTE_KEY_CLIENT.CLIENT_ID,
@@ -177,11 +204,16 @@ export function normalizeTxsResultFromClientDatum(
           },
           {
             key: ATTRIBUTE_KEY_CLIENT.CONSENSUS_HEIGHT,
-            value: `${latestHeight.revisionNumber}-${latestHeight.revisionHeight}`,
+            value: `${consensusHeight.revisionNumber}-${consensusHeight.revisionHeight}`,
           },
+          // Hermes consumes the canonical client_message Any; `header` remains for legacy readers.
           {
             key: ATTRIBUTE_KEY_CLIENT.HEADER,
             value: header,
+          },
+          {
+            key: ATTRIBUTE_KEY_CLIENT.CLIENT_MESSAGE_ANY_HEX,
+            value: clientMessageAnyHex,
           },
         ].map(
           (attr) =>
@@ -303,13 +335,10 @@ export function normalizeTxsResultFromModuleRedeemer(
   if (!moduleCallback.hasOwnProperty('OnRecvPacket')) return { code: 0, events: [] };
   const acknowledgementRes: AcknowledgementResponse = moduleCallback['OnRecvPacket']?.acknowledgement
     ?.response as unknown as AcknowledgementResponse;
-
-  const acknowledgement: Acknowledgement = {
-    result: Buffer.from(
-      acknowledgementRes['AcknowledgementResult'] && acknowledgementRes['AcknowledgementResult']['result'],
-    ),
-    error: acknowledgementRes['AcknowledgementError'] && acknowledgementRes['AcknowledgementError']['err'],
-  };
+  // Emit the real ack payload derived from the module callback so downstream
+  // relayer/event consumers see the same acknowledgement bytes committed in state.
+  const packetAck = acknowledgementJsonFromResponse(acknowledgementRes);
+  const packetAckHex = acknowledgementHexFromResponse(acknowledgementRes);
 
   // TODO: handle packet ack
   const packetData: Packet = channelRedeemer['RecvPacket']?.packet as unknown as Packet;
@@ -325,8 +354,7 @@ export function normalizeTxsResultFromModuleRedeemer(
           },
           {
             key: ATTRIBUTE_KEY_PACKET.PACKET_ACK,
-            value: Buffer.from([123, 34, 114, 101, 115, 117, 108, 116, 34, 58, 34, 65, 81, 61, 61, 34, 125]),
-            // value: packetAckBytes,
+            value: packetAck,
           },
           {
             key: ATTRIBUTE_KEY_PACKET.PACKET_DATA_HEX,
@@ -334,8 +362,7 @@ export function normalizeTxsResultFromModuleRedeemer(
           },
           {
             key: ATTRIBUTE_KEY_PACKET.PACKET_ACK_HEX,
-            value: toHex(Buffer.from([123, 34, 114, 101, 115, 117, 108, 116, 34, 58, 34, 65, 81, 61, 61, 34, 125])),
-            // value: packetAckHex,
+            value: packetAckHex,
           },
           {
             key: ATTRIBUTE_KEY_PACKET.PACKET_TIMEOUT_HEIGHT,

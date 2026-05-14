@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::config;
 use crate::logger::{log, verbose, warn};
+use crate::process::docker::DockerCli;
 use crate::utils::{execute_script, wait_for_health_check};
 
 pub(super) async fn prepare_local(
@@ -18,35 +19,28 @@ pub(super) async fn prepare_local(
     if !stateful {
         stop_local(cheqd_dir);
         // Stateless runs intentionally rebuild the validator home from the pinned mnemonics so
-        // repeated `caribic start cheqd` calls produce the same local chain identity every time.
+        // repeated `caribic chain start --chain cheqd` calls produce the same local chain
+        // identity every time.
         let network_config_dir = cheqd_dir.join("configuration/network-config");
         if network_config_dir.exists() {
             fs::remove_dir_all(network_config_dir.as_path())?;
         }
     }
 
-    if !cheqd_dir.join("configuration/network-config/validator-0/config/genesis.json").exists() {
+    if !cheqd_dir
+        .join("configuration/network-config/validator-0/config/genesis.json")
+        .exists()
+    {
         generate_local_network_config(project_root_path, cheqd_dir)?;
     }
 
     Ok(())
 }
 
-pub(super) async fn start_local(
-    cheqd_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
-    execute_script(
-        cheqd_dir,
-        "docker",
-        Vec::from([
-            "compose",
-            "-f",
-            "configuration/docker-compose.yml",
-            "up",
-            "-d",
-        ]),
-        Some(vec![("CHEQD_LOCAL_IMAGE", config::LOCAL_DOCKER_IMAGE)]),
-    )?;
+pub(super) async fn start_local(cheqd_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    DockerCli::new(cheqd_dir)
+        .with_envs(&[("CHEQD_LOCAL_IMAGE", config::LOCAL_DOCKER_IMAGE)])
+        .compose_ok(&["-f", "configuration/docker-compose.yml", "up", "-d"])?;
 
     let is_healthy = wait_for_health_check(
         config::LOCAL_STATUS_URL,
@@ -77,12 +71,8 @@ pub(super) async fn start_local(
 }
 
 pub(super) fn stop_local(cheqd_dir: &Path) {
-    let _ = execute_script(
-        cheqd_dir,
-        "docker",
-        Vec::from(["compose", "-f", "configuration/docker-compose.yml", "down"]),
-        None,
-    );
+    let _ =
+        DockerCli::new(cheqd_dir).compose_ok(&["-f", "configuration/docker-compose.yml", "down"]);
 }
 
 fn sync_workspace_assets_from_repo(
@@ -105,7 +95,7 @@ fn sync_workspace_assets_from_repo(
 
     fs::create_dir_all(cheqd_dir)?;
     copy_items(
-        &vec![configuration_source, scripts_source],
+        &[configuration_source, scripts_source],
         cheqd_dir,
         &fs_extra::dir::CopyOptions::new().overwrite(true),
     )?;
@@ -120,10 +110,8 @@ fn generate_local_network_config(
 ) -> Result<(), Box<dyn std::error::Error>> {
     log("Generating local cheqd network configuration ...");
 
-    let validator_mnemonic = config::load_demo_mnemonic(
-        project_root_path,
-        config::LOCAL_VALIDATOR_MNEMONIC_ACCOUNT,
-    )?;
+    let validator_mnemonic =
+        config::load_demo_mnemonic(project_root_path, config::LOCAL_VALIDATOR_MNEMONIC_ACCOUNT)?;
     let relayer_mnemonic =
         config::load_demo_mnemonic(project_root_path, config::LOCAL_RELAYER_MNEMONIC_ACCOUNT)?;
 

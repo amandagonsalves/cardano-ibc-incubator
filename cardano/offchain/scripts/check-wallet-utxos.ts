@@ -1,8 +1,22 @@
-import { Kupmios, Lucid, Network } from "@lucid-evolution/lucid";
+import {
+  installManagedCardanoAuthFetch,
+  resolveManagedKupmiosHeaders,
+  resolveManagedKupoUrl,
+  resolveManagedOgmiosUrl,
+} from "../src/http_auth.ts";
+const {
+  parseNetwork,
+  queryProtocolParametersCompat,
+  resolveOgmiosHttpUrl,
+  querySystemStart,
+  sanitizeProtocolParameters,
+} = await import("../src/external_cardano.ts");
 
 const deployerSk = Deno.env.get("DEPLOYER_SK");
 const kupoUrl = Deno.env.get("KUPO_URL");
 const ogmiosUrl = Deno.env.get("OGMIOS_URL");
+const kupoApiKey = Deno.env.get("KUPO_API_KEY")?.trim();
+const ogmiosApiKey = Deno.env.get("OGMIOS_API_KEY")?.trim();
 const cardanoNetworkMagic = Deno.env.get("CARDANO_NETWORK_MAGIC");
 
 if (!deployerSk || !kupoUrl || !ogmiosUrl || !cardanoNetworkMagic) {
@@ -11,28 +25,44 @@ if (!deployerSk || !kupoUrl || !ogmiosUrl || !cardanoNetworkMagic) {
   );
 }
 
-let cardanoNetwork: Network = "Custom";
-if (cardanoNetworkMagic === "1") {
-  cardanoNetwork = "Preprod";
-} else if (cardanoNetworkMagic === "2") {
-  cardanoNetwork = "Preview";
-} else if (cardanoNetworkMagic === "764824073") {
-  cardanoNetwork = "Mainnet";
-}
-
-const provider = new Kupmios(kupoUrl, ogmiosUrl);
-const lucid = await Lucid(provider, cardanoNetwork);
+installManagedCardanoAuthFetch();
+const chainZeroTime = await querySystemStart(ogmiosUrl);
+const protocolParameters = sanitizeProtocolParameters(
+  await queryProtocolParametersCompat(ogmiosUrl),
+);
+const { Kupmios, Lucid, SLOT_CONFIG_NETWORK } = await import(
+  "@lucid-evolution/lucid"
+);
+const { getLiveWalletUtxos } = await import("../src/utils.ts");
+const provider = new Kupmios(
+  resolveManagedKupoUrl(kupoUrl, kupoApiKey),
+  resolveManagedOgmiosUrl(resolveOgmiosHttpUrl(ogmiosUrl), ogmiosApiKey),
+  resolveManagedKupmiosHeaders(
+    kupoUrl,
+    resolveManagedOgmiosUrl(resolveOgmiosHttpUrl(ogmiosUrl), ogmiosApiKey),
+    kupoApiKey,
+    ogmiosApiKey,
+  ),
+);
+SLOT_CONFIG_NETWORK.Preview.zeroTime = chainZeroTime;
+const lucid = await Lucid(
+  provider,
+  parseNetwork(cardanoNetworkMagic),
+  {
+    presetProtocolParameters: protocolParameters,
+  } as any,
+);
 lucid.selectWallet.fromPrivateKey(deployerSk);
 
 const walletAddress = await lucid.wallet().address();
-const utxos = await lucid.wallet().getUtxos();
+const utxos = await getLiveWalletUtxos(lucid);
 
 if (utxos.length === 0) {
   throw new Error(
-    `No wallet UTxOs are visible yet for ${walletAddress} via ${kupoUrl}`,
+    `No live wallet UTxOs are visible yet for ${walletAddress} via ${kupoUrl}`,
   );
 }
 
 console.log(
-  `Wallet UTxOs visible for ${walletAddress}: ${utxos.length} via ${kupoUrl}`,
+  `Live wallet UTxOs visible for ${walletAddress}: ${utxos.length} via ${kupoUrl}`,
 );

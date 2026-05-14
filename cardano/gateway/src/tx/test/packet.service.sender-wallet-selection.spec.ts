@@ -39,6 +39,15 @@ describe('PacketService sender wallet selection for escrow', () => {
                 },
               },
             },
+            mintVoucher: {
+              scriptHash: 'mint-voucher-policy-id',
+            },
+            mintTransferEscrowShard: {
+              scriptHash: 'mint-transfer-escrow-shard-policy-id',
+            },
+            mintPort: {
+              scriptHash: 'mint-port-policy-id',
+            },
           },
           modules: {
             transfer: {
@@ -67,6 +76,7 @@ describe('PacketService sender wallet selection for escrow', () => {
       lucidServiceMock as unknown as LucidService,
       {} as DenomTraceService,
       {} as any,
+      { executePacket: jest.fn() } as any,
     );
 
     // Keep this test scoped to escrow wallet-selection behavior instead of HostState internals.

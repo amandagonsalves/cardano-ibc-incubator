@@ -1,14 +1,11 @@
-use aiken/collection/list
 use aiken/collection/pairs
-use cardano/address.{Address}
 use cardano/assets.{PolicyId}
 use cardano/transaction.{Input, Mint, Output, OutputReference, Transaction}
 use ibc/auth.{AuthToken}
-use ibc/core/ics_004/channel_datum.{ChannelDatum} as channel_datum_mod
+use ibc/core/ics_004/channel_datum.{ChannelDatum}
 use ibc/core/ics_004/channel_redeemer.{
   AcknowledgePacket, ChanCloseConfirm, ChanCloseInit, ChanOpenAck,
-  ChanOpenConfirm, RecvPacket, RefreshUtxo, SendPacket, SpendChannelRedeemer,
-  TimeoutPacket,
+  ChanOpenConfirm, RecvPacket, SendPacket, SpendChannelRedeemer, TimeoutPacket,
 }
 use ibc/utils/validator_utils
 
@@ -36,12 +33,14 @@ validator spend_channel(
     let spent_output = spent_input.output
     when redeemer is {
       ChanOpenAck { .. } -> {
-        // Channel handshake updates must be committed into the HostState root in the same transaction.
+        // Handshake channel changes use the channel-root HostState branch.
         expect _ =
-          validator_utils.require_host_state_thread(
+          validator_utils.require_host_state_redeemer(
             inputs,
             outputs,
+            redeemers,
             host_state_nft_policy_id,
+            validator_utils.ExpectUpdateChannel,
           )
 
         expect Some(redeemer) =
@@ -49,18 +48,20 @@ validator spend_channel(
 
         expect redeemer: AuthToken = redeemer
 
-        expect _ = validate_output_datum(spent_output.address, outputs)
+        expect _ = validate_output_datum(spent_output, outputs, datum.token)
 
         redeemer == datum.token
       }
 
       ChanOpenConfirm { .. } -> {
-        // Channel handshake updates must be committed into the HostState root in the same transaction.
+        // Handshake channel changes use the channel-root HostState branch.
         expect _ =
-          validator_utils.require_host_state_thread(
+          validator_utils.require_host_state_redeemer(
             inputs,
             outputs,
+            redeemers,
             host_state_nft_policy_id,
+            validator_utils.ExpectUpdateChannel,
           )
 
         expect Some(redeemer) =
@@ -68,17 +69,19 @@ validator spend_channel(
 
         expect redeemer: AuthToken = redeemer
 
-        expect _ = validate_output_datum(spent_output.address, outputs)
+        expect _ = validate_output_datum(spent_output, outputs, datum.token)
 
         redeemer == datum.token
       }
       ChanCloseInit -> {
-        // Channel state changes must be committed into the HostState root in the same transaction.
+        // Channel close changes use the channel-root HostState branch.
         expect _ =
-          validator_utils.require_host_state_thread(
+          validator_utils.require_host_state_redeemer(
             inputs,
             outputs,
+            redeemers,
             host_state_nft_policy_id,
+            validator_utils.ExpectUpdateChannel,
           )
 
         expect Some(redeemer) =
@@ -86,17 +89,20 @@ validator spend_channel(
 
         expect redeemer: AuthToken = redeemer
         and {
-          no_output_for_address(spent_output.address, outputs),
+          // Closing this channel removes this channel token; other channel outputs may still share the address.
+          validator_utils.no_output_contains_auth_token(outputs, datum.token),
           redeemer == datum.token,
         }
       }
       ChanCloseConfirm { .. } -> {
-        // Channel state changes must be committed into the HostState root in the same transaction.
+        // Channel close changes use the channel-root HostState branch.
         expect _ =
-          validator_utils.require_host_state_thread(
+          validator_utils.require_host_state_redeemer(
             inputs,
             outputs,
+            redeemers,
             host_state_nft_policy_id,
+            validator_utils.ExpectUpdateChannel,
           )
 
         expect Some(redeemer) =
@@ -107,79 +113,76 @@ validator spend_channel(
         redeemer == datum.token
       }
       RecvPacket { .. } -> {
-        // Packet processing changes channel/packet state, so it must be committed into HostState.
+        // Packet effects must use the packet-root HostState branch.
         expect _ =
-          validator_utils.require_host_state_thread(
+          validator_utils.require_host_state_redeemer(
             inputs,
             outputs,
+            redeemers,
             host_state_nft_policy_id,
+            validator_utils.ExpectHandlePacket,
           )
 
         expect Some(redeemer) =
           pairs.get_first(redeemers, Mint(recv_packet_policy_id))
 
         expect redeemer: AuthToken = redeemer
-        expect _ = validate_output_datum(spent_output.address, outputs)
+        expect _ = validate_output_datum(spent_output, outputs, datum.token)
         redeemer == datum.token
       }
       SendPacket { .. } -> {
-        // Packet processing changes channel/packet state, so it must be committed into HostState.
+        // Packet effects must use the packet-root HostState branch.
         expect _ =
-          validator_utils.require_host_state_thread(
+          validator_utils.require_host_state_redeemer(
             inputs,
             outputs,
+            redeemers,
             host_state_nft_policy_id,
+            validator_utils.ExpectHandlePacket,
           )
 
         expect Some(redeemer) =
           pairs.get_first(redeemers, Mint(send_packet_policy_id))
 
         expect redeemer: AuthToken = redeemer
-        expect _ = validate_output_datum(spent_output.address, outputs)
+        expect _ = validate_output_datum(spent_output, outputs, datum.token)
         redeemer == datum.token
       }
       TimeoutPacket { .. } -> {
-        // Packet processing changes channel/packet state, so it must be committed into HostState.
+        // Packet effects must use the packet-root HostState branch.
         expect _ =
-          validator_utils.require_host_state_thread(
+          validator_utils.require_host_state_redeemer(
             inputs,
             outputs,
+            redeemers,
             host_state_nft_policy_id,
+            validator_utils.ExpectHandlePacket,
           )
 
         expect Some(redeemer) =
           pairs.get_first(redeemers, Mint(timeout_packet_policy_id))
 
         expect redeemer: AuthToken = redeemer
-        expect _ = validate_output_datum(spent_output.address, outputs)
+        expect _ = validate_output_datum(spent_output, outputs, datum.token)
         redeemer == datum.token
       }
       AcknowledgePacket { .. } -> {
-        // Packet processing changes channel/packet state, so it must be committed into HostState.
+        // Packet effects must use the packet-root HostState branch.
         expect _ =
-          validator_utils.require_host_state_thread(
+          validator_utils.require_host_state_redeemer(
             inputs,
             outputs,
+            redeemers,
             host_state_nft_policy_id,
+            validator_utils.ExpectHandlePacket,
           )
 
         expect Some(redeemer) =
           pairs.get_first(redeemers, Mint(acknowledge_packet_policy_id))
 
         expect redeemer: AuthToken = redeemer
-        expect _ = validate_output_datum(spent_output.address, outputs)
+        expect _ = validate_output_datum(spent_output, outputs, datum.token)
         redeemer == datum.token
-      }
-      RefreshUtxo -> {
-        expect auth.contain_auth_token(spent_output, datum.token)
-
-        let updated_output = find_updated_output(spent_output.address, outputs)
-        let updated_datum = extract_output_datum(updated_output)
-
-        and {
-          auth.contains_only_auth_tokens(updated_output, [datum.token]),
-          channel_datum_mod.validate_refresh_utxo(datum, updated_datum),
-        }
       }
     }
   }
@@ -189,21 +192,16 @@ validator spend_channel(
   }
 }
 
-fn find_updated_output(address: Address, outputs: List<Output>) -> Output {
-  expect [updated_output] =
-    list.filter(outputs, fn(output) { output.address == address })
-  updated_output
-}
-
-fn no_output_for_address(address: Address, outputs: List<Output>) -> Bool {
-  list.is_empty(list.filter(outputs, fn(output) { output.address == address }))
-}
-
 fn extract_output_datum(output: Output) -> ChannelDatum {
   expect datum: ChannelDatum = validator_utils.get_inline_datum(output)
   datum
 }
 
-fn validate_output_datum(address: Address, outputs: List<Output>) {
-  find_updated_output(address, outputs) |> extract_output_datum()
+fn validate_output_datum(
+  spent_output: Output,
+  outputs: List<Output>,
+  token: AuthToken,
+) {
+  validator_utils.find_unique_continuation_output(spent_output, outputs, token)
+    |> extract_output_datum()
 }

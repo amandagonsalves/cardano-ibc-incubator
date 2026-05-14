@@ -17,24 +17,13 @@ const PACKET = {
   timeout_timestamp: 0n,
 } as const;
 
-const MITHRIL_CLIENT_STATE = {
-  chain_id: '656e747279706f696e74',
-  latest_height: { revisionNumber: 0n, revisionHeight: 100n },
-  frozen_height: { revisionNumber: 0n, revisionHeight: 0n },
-  current_epoch: 4n,
-  trusting_period: 1000n,
-  protocol_parameters: { k: 5n, m: 100n, phi_f: { numerator: 1n, denominator: 2n } },
-  upgrade_path: ['75706772616465', '70617468'],
-  host_state_nft_policy_id: 'cc',
-  host_state_nft_token_name: 'dd',
-} as const;
+const MITHRIL_CLIENT_STATE_HEX = 'aabbccdd';
 
 describe('Redeemer encoding regression', () => {
   it('keeps MintChannel redeemer encoding stable', async () => {
     const encoded = await encodeMintChannelRedeemer(
       {
         ChanOpenTry: {
-          handler_token: { policyId: 'aa', name: 'bb' },
           counterparty_version: '6962632d7631',
           proof_init: EMPTY_PROOF as any,
           proof_height: HEIGHT,
@@ -43,7 +32,7 @@ describe('Redeemer encoding regression', () => {
       Lucid,
     );
 
-    expect(encoded).toBe('d87a84d8798241aa41bb466962632d7631d8798180d87982000b');
+    expect(encoded).toBe('d87a83466962632d7631d8798180d87982000b');
   });
 
   it('keeps SpendChannel redeemer encoding stable', async () => {
@@ -66,8 +55,7 @@ describe('Redeemer encoding regression', () => {
     const encoded = await encodeMintConnectionRedeemer(
       {
         ConnOpenTry: {
-          handler_auth_token: { policyId: 'aa', name: 'bb' },
-          client_state: MITHRIL_CLIENT_STATE as any,
+          client_state: MITHRIL_CLIENT_STATE_HEX,
           proof_init: EMPTY_PROOF as any,
           proof_client: EMPTY_PROOF as any,
           proof_height: HEIGHT,
@@ -77,26 +65,17 @@ describe('Redeemer encoding regression', () => {
     );
 
     expect(encoded).toBe(
-      'd87a85d8798241aa41bbd879894a656e747279706f696e74d87982001864d879820000041903e8d87983051864d879820102824775706772616465447061746841cc41ddd8798180d8798180d87982000b',
+      'd87a8444aabbccddd8798180d8798180d87982000b',
     );
   });
 
   it('keeps SpendConnection redeemer encoding stable', async () => {
     const encoded = await encodeSpendConnectionRedeemer(
-      {
-        ConnOpenAck: {
-          counterparty_client_state: MITHRIL_CLIENT_STATE as any,
-          proof_try: EMPTY_PROOF as any,
-          proof_client: EMPTY_PROOF as any,
-          proof_height: HEIGHT,
-        },
-      },
+      'ConnOpenAck',
       Lucid,
     );
 
-    expect(encoded).toBe(
-      'd87984d879894a656e747279706f696e74d87982001864d879820000041903e8d87983051864d879820102824775706772616465447061746841cc41ddd8798180d8798180d87982000b',
-    );
+    expect(encoded).toBe('d87980');
   });
 
   it('keeps VerifyProof redeemer encoding stable', () => {

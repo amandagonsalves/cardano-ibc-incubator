@@ -1,3 +1,5 @@
+#![deny(dead_code, unused_imports, unused_variables)]
+
 use std::path::Path;
 use std::path::PathBuf;
 
@@ -13,6 +15,8 @@ mod constants;
 mod demos;
 mod install;
 mod logger;
+mod process;
+mod route_setup;
 mod setup;
 mod start;
 mod stop;
@@ -37,16 +41,10 @@ enum StartTarget {
     Bridge,
     /// Starts the Entrypoint chain (packet-forwarding chain)
     Entrypoint,
-    /// Starts the Osmosis optional chain (network selected via --network)
-    Osmosis,
-    /// Starts the cheqd optional chain (network selected via --network)
-    Cheqd,
-    /// Starts the Injective optional chain (network selected via --network)
-    Injective,
-    /// Starts the Stellar optional chain (local Soroban devnet via Docker quickstart)
-    Stellar,
     /// Starts only the Gateway service
     Gateway,
+    /// Starts only the IBC Swap dapp
+    Dapp,
     /// Starts only the Hermes relayer
     Relayer,
     /// Starts only the Mithril services
@@ -63,14 +61,6 @@ enum StopTarget {
     Bridge,
     /// Stops the Entrypoint chain
     Entrypoint,
-    /// Stops the Osmosis optional chain (network selected via --network)
-    Osmosis,
-    /// Stops the cheqd optional chain (network selected via --network)
-    Cheqd,
-    /// Stops the Injective optional chain (network selected via --network)
-    Injective,
-    /// Stops the Stellar optional chain
-    Stellar,
     /// Stops the demo services
     Demo,
     /// Stops only the Gateway service
@@ -109,13 +99,46 @@ enum BenchmarkCommand {
     },
 }
 
+#[derive(clap::ValueEnum, Clone, Copy, Debug, PartialEq, Eq)]
+enum TransferRouteChainArg {
+    /// Core Cardano chain currently selected by `caribic start --network`
+    Cardano,
+    /// Injective optional chain
+    Injective,
+    /// Osmosis optional chain
+    Osmosis,
+}
+
+#[derive(Subcommand)]
+enum SetupCommand {
+    /// Create or reuse an IBC token-transfer route without executing a demo transfer
+    Route {
+        /// Source chain for the route
+        #[arg(long = "from", value_enum, default_value_t = TransferRouteChainArg::Cardano)]
+        from: TransferRouteChainArg,
+        /// Expected source network (for Cardano: local or preprod)
+        #[arg(long = "from-network")]
+        from_network: Option<String>,
+        /// Destination chain for the route
+        #[arg(long = "to", alias = "dest", alias = "destination", value_enum)]
+        to: TransferRouteChainArg,
+        /// Destination network (for example: local or testnet)
+        #[arg(
+            long = "to-network",
+            alias = "dest-network",
+            alias = "destination-network"
+        )]
+        to_network: Option<String>,
+    },
+}
+
 #[derive(Subcommand)]
 enum Commands {
     /// Verifies that all the prerequisites are installed and ensures that the configuration is correctly set up
     Check,
     /// Installs missing local prerequisites on macOS or Ubuntu Linux
     Install,
-    /// Starts bridge components. No argument starts everything; optionally specify: all, network, bridge, entrypoint, osmosis, cheqd, injective, stellar, gateway, relayer, mithril
+    /// Starts bridge components. No argument starts everything; optionally specify: all, network, bridge, entrypoint, gateway, relayer, mithril
     Start {
         #[arg(value_enum)]
         target: Option<StartTarget>,
@@ -125,21 +148,21 @@ enum Commands {
         /// Start Mithril services for light client testing (adds 5-10 minute startup time)
         #[arg(long, default_value_t = false)]
         with_mithril: bool,
-        /// Optional network profile for optional chain targets or the managed Cardano runtime (local, preprod)
+        /// Optional network profile for the managed Cardano runtime (local, preprod)
         #[arg(long)]
         network: Option<String>,
-        /// Chain-specific KEY=VALUE flag (repeatable), only for optional chain targets
+        /// Chain-specific KEY=VALUE flag (repeatable); use `caribic chain start --chain <id>` for optional chains
         #[arg(long = "chain-flag")]
         chain_flag: Vec<String>,
     },
-    /// Stops bridge components. No argument stops everything; optionally specify: all, network, bridge, entrypoint, osmosis, cheqd, injective, stellar, demo, gateway, relayer, mithril
+    /// Stops bridge components. No argument stops everything; optionally specify: all, network, bridge, entrypoint, demo, gateway, relayer, mithril
     Stop {
         #[arg(value_enum)]
         target: Option<StopTarget>,
-        /// Optional network profile for optional chain targets or the managed Cardano runtime (local, preprod)
+        /// Optional network profile for the managed Cardano runtime (local, preprod)
         #[arg(long)]
         network: Option<String>,
-        /// Chain-specific KEY=VALUE flag (repeatable), only for optional chain targets
+        /// Chain-specific KEY=VALUE flag (repeatable); use `caribic chain stop --chain <id>` for optional chains
         #[arg(long = "chain-flag")]
         chain_flag: Vec<String>,
     },
@@ -160,6 +183,18 @@ enum Commands {
         /// Optional: specific service to check (gateway, cardano, postgres, yaci, kupo, ogmios, mithril, hermes, entrypoint, osmosis, redis, cheqd, injective)
         #[arg(long)]
         service: Option<String>,
+    },
+    /// Prints or writes a deterministic Yaci bootstrap checkpoint for public Cardano history
+    YaciCheckpoint {
+        /// Cardano network profile to query
+        #[arg(long, default_value = "preprod")]
+        network: String,
+        /// Select the first block of tip_epoch - epochs_back
+        #[arg(long, default_value_t = 2)]
+        epochs_back: u64,
+        /// Write YACI_SYNC_START_* values into cardano/gateway/.env and chains/cardano/.env
+        #[arg(long, default_value_t = false)]
+        write_env: bool,
     },
     /// Runs security and validator audits (gateway npm, caribic cargo, onchain aiken)
     Audit,
@@ -201,6 +236,11 @@ enum Commands {
         /// Port identifier on chain B
         #[arg(long)]
         b_port: String,
+    },
+    /// Set up reusable bridge state without running a demo transfer
+    Setup {
+        #[command(subcommand)]
+        command: SetupCommand,
     },
     /// Starts a demo preset. Usage: `caribic demo token-swap --chain osmosis --network local`
     Demo {
@@ -270,6 +310,7 @@ enum ChainCommand {
     /// Start an optional chain adapter
     Start {
         /// Chain identifier (for example: osmosis, cheqd, injective)
+        #[arg(long)]
         chain: String,
         /// Optional network profile (for example: local, testnet)
         #[arg(long)]
@@ -281,6 +322,7 @@ enum ChainCommand {
     /// Stop an optional chain adapter
     Stop {
         /// Chain identifier (for example: osmosis, cheqd, injective)
+        #[arg(long)]
         chain: String,
         /// Optional network profile (for example: local, testnet)
         #[arg(long)]
@@ -292,6 +334,7 @@ enum ChainCommand {
     /// Check health for an optional chain adapter
     Health {
         /// Chain identifier (for example: osmosis, cheqd, injective)
+        #[arg(long)]
         chain: String,
         /// Optional network profile (for example: local, testnet)
         #[arg(long)]
@@ -308,7 +351,13 @@ async fn main() {
     let args = Args::parse();
 
     // Show the banner only for startup flows to keep other commands quiet and script-friendly.
-    if matches!(args.command, Commands::Start { .. }) {
+    if matches!(
+        args.command,
+        Commands::Start { .. }
+            | Commands::Chain {
+                command: ChainCommand::Start { .. }
+            }
+    ) {
         utils::print_header();
     }
 
@@ -353,6 +402,13 @@ async fn main() {
         Commands::HealthCheck { service } => {
             commands::run_health_check(project_root_path, service.as_deref())
         }
+        Commands::YaciCheckpoint {
+            network,
+            epochs_back,
+            write_env,
+        } => {
+            commands::run_yaci_checkpoint(project_root_path, &network, epochs_back, write_env).await
+        }
         Commands::Audit => commands::run_audit(project_root_path),
         Commands::ListClients { chain } => commands::run_list_clients(&chain),
         Commands::CreateClient { a_chain, b_chain } => {
@@ -367,6 +423,7 @@ async fn main() {
             a_port,
             b_port,
         } => commands::run_create_channel(project_root_path, &a_chain, &b_chain, &a_port, &b_port),
+        Commands::Setup { command } => commands::run_setup(project_root_path, command),
         Commands::Benchmark { command } => match command {
             BenchmarkCommand::DenomRegistry { bucket, inserts } => {
                 commands::run_denom_registry_benchmark(project_root_path, bucket, inserts)

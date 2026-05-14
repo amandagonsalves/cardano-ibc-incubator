@@ -1,21 +1,19 @@
 use crate::logger::{self, verbose};
+use crate::process::runner;
+use crate::process::{cardano::CardanoCli, docker::DockerCli};
 use console::style;
 use indicatif::ProgressBar;
-use indicatif::ProgressStyle;
 use regex::Regex;
 use reqwest::Client;
 use serde_json::Value;
-use std::collections::VecDeque;
 use std::fs::File;
 use std::fs::Permissions;
-use std::io::BufRead;
 use std::io::IsTerminal;
 use std::io::{self, BufReader, Write};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::process::Command;
 use std::thread;
 use std::time::Duration;
 use std::{collections::HashMap, fs};
@@ -96,28 +94,9 @@ pub fn default_config_path() -> PathBuf {
 pub fn get_cardano_tip_state(
     project_root_dir: &Path,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let active_network = crate::config::active_core_cardano_network(project_root_dir);
-    let network_magic = crate::config::cardano_network_profile(active_network)
-        .network_magic
-        .to_string();
-    let mut command = Command::new("docker");
-    let query_output = command
-        .current_dir(project_root_dir.join("chains/cardano"))
-        .args([
-            "compose",
-            "exec",
-            "cardano-node",
-            "cardano-cli",
-            "query",
-            "tip",
-            "--cardano-mode",
-            "--testnet-magic",
-            network_magic.as_str(),
-        ]);
-
-    let output = query_output.output().map_err(|error| {
-        format!("Failed to query tip from cardano-node: {}", error)
-    })?;
+    let output = CardanoCli::new(project_root_dir)
+        .query_tip()
+        .map_err(|error| format!("Failed to query tip from cardano-node: {}", error))?;
 
     if output.status.success() {
         verbose(&format!(
@@ -180,6 +159,22 @@ pub fn get_cardano_state(
     }
 }
 
+pub fn get_cardano_era(project_root_dir: &Path) -> Result<String, Box<dyn std::error::Error>> {
+    let cardano_tip_state = get_cardano_tip_state(project_root_dir)?;
+    let cardano_tip_json: Value = serde_json::from_str(&cardano_tip_state)?;
+    let era_json = cardano_tip_json.get("era");
+
+    if let Some(era) = era_json.and_then(Value::as_str) {
+        Ok(era.to_string())
+    } else {
+        Err(format!(
+            "Failed to extract era from cardano-node: {}",
+            cardano_tip_state
+        )
+        .into())
+    }
+}
+
 pub fn replace_text_in_file(path: &Path, pattern: &str, replacement: &str) -> io::Result<()> {
     let content = fs::read_to_string(path)?;
     let re = Regex::new(pattern).unwrap();
@@ -190,10 +185,7 @@ pub fn replace_text_in_file(path: &Path, pattern: &str, replacement: &str) -> io
     Ok(())
 }
 
-pub fn change_dir_permissions_read_only(
-    dir: &Path,
-    exclude_files: &[&str],
-) -> std::io::Result<()> {
+pub fn change_dir_permissions_read_only(dir: &Path, exclude_files: &[&str]) -> std::io::Result<()> {
     if dir.is_dir() {
         for entry in fs::read_dir(dir)? {
             let entry = entry?;
@@ -346,80 +338,35 @@ pub fn execute_script(
     ));
     let envs = script_env.unwrap_or_default();
 
-    let mut cmd = Command::new(script_name)
-        .current_dir(script_dir)
-        .args(script_args)
-        .envs(envs)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()?;
+    let mut cmd = Command::new(script_name);
+    cmd.current_dir(script_dir).args(script_args).envs(envs);
 
-    let stdout = cmd
-        .stdout
-        .take()
-        .ok_or_else(|| io::Error::other("Failed to capture stdout"))?;
-    let stderr = cmd
-        .stderr
-        .take()
-        .ok_or_else(|| io::Error::other("Failed to capture stderr"))?;
+    let output = runner::run_output_streaming(
+        &mut cmd,
+        runner::StreamingOptions {
+            label: script_name,
+            heartbeat_interval: None,
+            log_failure_output: false,
+            timeout: None,
+        },
+        |_, line| logger::info(line),
+    )
+    .map_err(io::Error::other)?;
 
-    let (line_tx, line_rx) = mpsc::channel::<String>();
-
-    let stdout_tx = line_tx.clone();
-    let stdout_handle = thread::spawn(move || -> io::Result<String> {
-        let mut output = String::new();
-        let reader = io::BufReader::new(stdout);
-        for line in reader.lines() {
-            let line = line?;
-            output.push_str(&line);
-            output.push('\n');
-            let _ = stdout_tx.send(line);
-        }
-        Ok(output)
-    });
-
-    let stderr_tx = line_tx.clone();
-    let stderr_handle = thread::spawn(move || -> io::Result<String> {
-        let mut output = String::new();
-        let reader = io::BufReader::new(stderr);
-        for line in reader.lines() {
-            let line = line?;
-            output.push_str(&line);
-            output.push('\n');
-            let _ = stderr_tx.send(line);
-        }
-        Ok(output)
-    });
-
-    // Close this sender so the channel terminates once both reader threads exit.
-    drop(line_tx);
-
-    for line in line_rx {
-        logger::info(&line);
+    logger::info(&format!("Script exited with status: {}", output.status));
+    if !output.status.success() {
+        let stdout_output = String::from_utf8_lossy(&output.stdout);
+        let stderr_output = String::from_utf8_lossy(&output.stderr);
+        return Err(io::Error::other(format!(
+            "Command failed (status={}): {} {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            script_name,
+            script_args_display,
+            stdout_output.trim(),
+            stderr_output.trim()
+        )));
     }
-
-    let status = cmd.wait()?;
-    let output = stdout_handle
-        .join()
-        .map_err(|_| io::Error::other("Failed to join stdout reader"))??;
-    let stderr_output = stderr_handle
-        .join()
-        .map_err(|_| io::Error::other("Failed to join stderr reader"))??;
-
-    logger::info(&format!("Script exited with status: {}", status));
-    if !status.success() {
-        return Err(io::Error::other(
-            format!(
-                "Command failed (status={}): {} {}\nstdout:\n{}\nstderr:\n{}",
-                status,
-                script_name,
-                script_args_display,
-                output.trim(),
-                stderr_output.trim()
-            ),
-        ));
-    }
-    Ok(output)
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
 pub fn execute_script_with_progress(
@@ -428,87 +375,16 @@ pub fn execute_script_with_progress(
     script_args: Vec<&str>,
     start_message: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let progress_bar = ProgressBar::new_spinner();
-    progress_bar.enable_steady_tick(Duration::from_millis(100));
-    progress_bar.set_style(
-        ProgressStyle::with_template("{prefix:.bold} {spinner} {wide_msg}")
-            .unwrap()
-            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
-    );
+    let mut command = Command::new(script_name);
+    command.current_dir(script_dir).args(script_args);
 
-    progress_bar.set_prefix(start_message.to_owned());
-
-    let mut command = Command::new(script_name)
-        .current_dir(script_dir)
-        .args(script_args)
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
+    let output = runner::run_with_spinner(&mut command, start_message)
         .map_err(|error| format!("Failed to initialize localnet: {}", error))?;
 
-    match logger::get_verbosity() {
-        logger::Verbosity::Verbose => {
-            let stdout = command.stdout.as_mut().expect("Failed to open stdout");
-            let reader = BufReader::new(stdout);
-
-            for line in reader.lines() {
-                let line = line.unwrap_or_else(|_| "Failed to read line".to_string());
-                progress_bar.set_message(line.trim().to_string());
-            }
-        }
-        logger::Verbosity::Info => {
-            let mut last_lines = VecDeque::with_capacity(5);
-
-            if let Some(stdout) = command.stdout.take() {
-                let reader = BufReader::new(stdout);
-
-                for line in reader.lines() {
-                    let line = line.unwrap_or_else(|_| "Failed to read line".to_string());
-                    if last_lines.len() == 5 {
-                        last_lines.pop_front();
-                    }
-                    last_lines.push_back(line);
-                    let output = last_lines
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<String>>()
-                        .join("\n");
-
-                    progress_bar.set_message(output.to_string());
-                }
-            }
-        }
-        logger::Verbosity::Standard => {
-            if let Some(stdout) = command.stdout.take() {
-                let reader = BufReader::new(stdout);
-
-                for line in reader.lines() {
-                    let last_line = line.unwrap_or_else(|_| "Failed to read line".to_string());
-                    progress_bar.set_message(last_line.trim().to_string());
-                }
-            }
-        }
-        _ => {}
-    }
-
-    let status = command
-        .wait()
-        .map_err(|error| format!("Command wasn't running: {}", error))?;
-    progress_bar.finish_and_clear();
-    if status.success() {
+    if output.status.success() {
         Ok(())
     } else {
-        let mut error_output = String::new();
-        if let Some(stderr) = command.stderr.take() {
-            let reader = BufReader::new(stderr);
-            for line in reader.lines() {
-                let line = line.unwrap_or_else(|_| "Failed to read line".to_string());
-                error_output.push_str(&line);
-            }
-            Err(error_output.into())
-        } else {
-            Err("Failed to execute script".into())
-        }
+        Err(runner::best_output_details(&output).into())
     }
 }
 
@@ -603,23 +479,8 @@ pub fn extract_tendermint_connection_id(output: Output) -> Option<String> {
 }
 
 pub fn query_balance(project_root_path: &Path, address: &str) -> u64 {
-    let cardano_dir = project_root_path.join("chains/cardano");
-
-    let cardano_cli_args = vec!["compose", "exec", "cardano-node", "cardano-cli"];
-    let build_address_args = vec![
-        "query",
-        "utxo",
-        "--address",
-        address,
-        "--testnet-magic",
-        "42",
-        "--output-json",
-    ];
-    let balance = Command::new("docker")
-        .current_dir(cardano_dir)
-        .args(&cardano_cli_args)
-        .args(build_address_args)
-        .output()
+    let balance = CardanoCli::new(project_root_path)
+        .query_utxo(address)
         .expect("Failed to build address")
         .stdout;
 
@@ -633,9 +494,9 @@ pub fn query_balance(project_root_path: &Path, address: &str) -> u64 {
 
 /// Check if a Docker container is running and healthy
 pub fn check_container_status(container_name: &str) -> Result<String, Box<dyn Error>> {
-    let output = Command::new("docker")
-        .args(["inspect", "--format", "{{.State.Status}}", container_name])
-        .output()?;
+    let output = DockerCli::new(Path::new("."))
+        .raw_output(["inspect", "--format", "{{.State.Status}}", container_name].as_slice())
+        .map_err(io::Error::other)?;
 
     if output.status.success() {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
@@ -646,18 +507,19 @@ pub fn check_container_status(container_name: &str) -> Result<String, Box<dyn Er
 
 /// Get the last N lines of Docker container logs
 pub fn get_container_logs(container_name: &str, lines: usize) -> Result<String, Box<dyn Error>> {
-    let output = Command::new("docker")
-        .args(["logs", "--tail", &lines.to_string(), container_name])
-        .output()?;
+    let lines_arg = lines.to_string();
+    let output = DockerCli::new(Path::new("."))
+        .raw_output(["logs", "--tail", lines_arg.as_str(), container_name].as_slice())
+        .map_err(io::Error::other)?;
 
     Ok(String::from_utf8_lossy(&output.stderr).to_string())
 }
 
 /// Check if a container has exited and return the exit code
 pub fn get_container_exit_code(container_name: &str) -> Result<Option<i32>, Box<dyn Error>> {
-    let output = Command::new("docker")
-        .args(["inspect", "--format", "{{.State.ExitCode}}", container_name])
-        .output()?;
+    let output = DockerCli::new(Path::new("."))
+        .raw_output(["inspect", "--format", "{{.State.ExitCode}}", container_name].as_slice())
+        .map_err(io::Error::other)?;
 
     if output.status.success() {
         let exit_code_str = String::from_utf8_lossy(&output.stdout).trim().to_string();

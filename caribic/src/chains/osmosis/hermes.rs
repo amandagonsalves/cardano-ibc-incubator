@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::thread;
 use std::time::Duration;
 
@@ -9,14 +9,15 @@ use serde_json::Value;
 
 use crate::chains::hermes_support;
 use crate::chains::hermes_support::{
-    HermesAddressType, HermesCosmosChainProfile, HermesGasPrice, HermesTrustThreshold,
+    HermesAddressType, HermesCosmosChainProfile, HermesEventSource, HermesGasPrice,
+    HermesTrustThreshold,
 };
 use crate::chains::osmosis::config as osmosis_config;
 use crate::config;
 use crate::logger::{self, log, log_or_show_progress, verbose};
+use crate::process::hermes::HermesCli;
 use crate::utils::{
-    execute_script, extract_tendermint_client_id, extract_tendermint_connection_id,
-    parse_tendermint_client_id,
+    extract_tendermint_client_id, extract_tendermint_connection_id, parse_tendermint_client_id,
 };
 
 fn entrypoint_chain_id() -> String {
@@ -39,9 +40,7 @@ pub(super) fn configure_hermes_for_demo(
     }
 }
 
-fn configure_local_hermes_for_demo(
-    osmosis_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn configure_local_hermes_for_demo(osmosis_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let optional_progress_bar = match logger::get_verbosity() {
         logger::Verbosity::Verbose => None,
         _ => Some(ProgressBar::new_spinner()),
@@ -71,21 +70,15 @@ fn configure_local_hermes_for_demo(
         "Local Osmosis chain used by token-swap demo",
     )?;
     let hermes_binary = resolve_local_hermes_binary(osmosis_dir)?;
-    let hermes_binary_str = hermes_binary.to_str().ok_or_else(|| {
-        format!(
-            "Hermes binary path is not valid UTF-8: {}",
-            hermes_binary.display()
-        )
-    })?;
     verbose(&format!(
         "Using Hermes binary at {}",
         hermes_binary.display()
     ));
 
-    execute_script(
+    run_hermes_output(
+        hermes_binary.as_path(),
         script_dir.as_path(),
-        hermes_binary_str,
-        Vec::from([
+        &[
             "keys",
             "add",
             "--overwrite",
@@ -93,14 +86,13 @@ fn configure_local_hermes_for_demo(
             entrypoint_chain_id().as_str(),
             "--mnemonic-file",
             osmosis_dir.join("scripts/hermes/cosmos").to_str().unwrap(),
-        ]),
-        None,
+        ],
     )?;
 
-    execute_script(
+    run_hermes_output(
+        hermes_binary.as_path(),
         script_dir.as_path(),
-        hermes_binary_str,
-        Vec::from([
+        &[
             "keys",
             "add",
             "--overwrite",
@@ -108,8 +100,7 @@ fn configure_local_hermes_for_demo(
             osmosis_config::LOCAL_CHAIN_ID,
             "--mnemonic-file",
             osmosis_dir.join("scripts/hermes/osmosis").to_str().unwrap(),
-        ]),
-        None,
+        ],
     )?;
 
     log_or_show_progress(
@@ -122,18 +113,19 @@ fn configure_local_hermes_for_demo(
 
     let mut local_osmosis_client_id = None;
     for _ in 0..10 {
-        let hermes_create_client_output = Command::new(&hermes_binary)
-            .current_dir(&script_dir)
-            .args(&[
+        let hermes_create_client_output = run_hermes_output(
+            hermes_binary.as_path(),
+            script_dir.as_path(),
+            &[
                 "create",
                 "client",
                 "--host-chain",
                 osmosis_config::LOCAL_CHAIN_ID,
                 "--reference-chain",
                 entrypoint_chain_id().as_str(),
-            ])
-            .output()
-            .expect("Failed to create osmosis client");
+            ],
+        )
+        .expect("Failed to create osmosis client");
 
         verbose(&format!(
             "status: {}, stdout: {}, stderr: {}",
@@ -158,9 +150,10 @@ fn configure_local_hermes_for_demo(
             local_osmosis_client_id
         ));
 
-        let create_entrypoint_chain_client_output = Command::new(&hermes_binary)
-            .current_dir(&script_dir)
-            .args(&[
+        let create_entrypoint_chain_client_output = run_hermes_output(
+            hermes_binary.as_path(),
+            script_dir.as_path(),
+            &[
                 "create",
                 "client",
                 "--host-chain",
@@ -169,9 +162,9 @@ fn configure_local_hermes_for_demo(
                 osmosis_config::LOCAL_CHAIN_ID,
                 "--trusting-period",
                 "86000s",
-            ])
-            .output()
-            .expect("Failed to query clients");
+            ],
+        )
+        .expect("Failed to query clients");
 
         let entrypoint_chain_client_id =
             extract_tendermint_client_id(create_entrypoint_chain_client_output);
@@ -189,9 +182,10 @@ fn configure_local_hermes_for_demo(
                 ),
                 &optional_progress_bar,
             );
-            let create_connection_output = Command::new(&hermes_binary)
-                .current_dir(&script_dir)
-                .args(&[
+            let create_connection_output = run_hermes_output(
+                hermes_binary.as_path(),
+                script_dir.as_path(),
+                &[
                     "create",
                     "connection",
                     "--a-chain",
@@ -200,9 +194,9 @@ fn configure_local_hermes_for_demo(
                     entrypoint_chain_client_id.as_str(),
                     "--b-client",
                     &local_osmosis_client_id,
-                ])
-                .output()
-                .expect("Failed to create connection");
+                ],
+            )
+            .expect("Failed to create connection");
 
             verbose(&format!(
                 "status: {}, stdout: {}, stderr: {}",
@@ -220,9 +214,10 @@ fn configure_local_hermes_for_demo(
                     &format!("{} Create a channel", style("Step 4/4").bold().dim()),
                     &optional_progress_bar,
                 );
-                let create_channel_output = Command::new(&hermes_binary)
-                    .current_dir(&script_dir)
-                    .args(&[
+                let create_channel_output = run_hermes_output(
+                    hermes_binary.as_path(),
+                    script_dir.as_path(),
+                    &[
                         "create",
                         "channel",
                         "--a-chain",
@@ -233,9 +228,9 @@ fn configure_local_hermes_for_demo(
                         "transfer",
                         "--b-port",
                         "transfer",
-                    ])
-                    .output()
-                    .expect("Failed to query channels");
+                    ],
+                )
+                .expect("Failed to query channels");
 
                 if create_channel_output.status.success() {
                     verbose(&format!(
@@ -262,9 +257,7 @@ fn configure_local_hermes_for_demo(
     Ok(())
 }
 
-fn configure_testnet_hermes_for_demo(
-    osmosis_dir: &Path,
-) -> Result<(), Box<dyn std::error::Error>> {
+fn configure_testnet_hermes_for_demo(osmosis_dir: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let optional_progress_bar = match logger::get_verbosity() {
         logger::Verbosity::Verbose => None,
         _ => Some(ProgressBar::new_spinner()),
@@ -272,9 +265,8 @@ fn configure_testnet_hermes_for_demo(
 
     if let Some(progress_bar) = &optional_progress_bar {
         progress_bar.set_style(ProgressStyle::with_template("{prefix:.bold} {wide_msg}").unwrap());
-        progress_bar.set_prefix(
-            "Configuring Hermes for Entrypoint↔Osmosis testnet channel ...".to_owned(),
-        );
+        progress_bar
+            .set_prefix("Configuring Hermes for Entrypoint↔Osmosis testnet channel ...".to_owned());
     } else {
         log("Configuring Hermes for Entrypoint↔Osmosis testnet channel ...");
     }
@@ -352,9 +344,10 @@ fn configure_testnet_hermes_for_demo(
         &optional_progress_bar,
     );
 
-    let create_connection_output = Command::new(&hermes_binary)
-        .current_dir(osmosis_dir)
-        .args([
+    let create_connection_output = run_hermes_output(
+        hermes_binary.as_path(),
+        osmosis_dir,
+        &[
             "create",
             "connection",
             "--a-chain",
@@ -363,8 +356,8 @@ fn configure_testnet_hermes_for_demo(
             entrypoint_client_id.as_str(),
             "--b-client",
             osmosis_client_id.as_str(),
-        ])
-        .output()?;
+        ],
+    )?;
     if !create_connection_output.status.success() {
         return Err(format!(
             "Failed to create Entrypoint↔Osmosis connection for chain {}:\n{}",
@@ -381,9 +374,10 @@ fn configure_testnet_hermes_for_demo(
         &optional_progress_bar,
     );
 
-    let create_channel_output = Command::new(&hermes_binary)
-        .current_dir(osmosis_dir)
-        .args([
+    let create_channel_output = run_hermes_output(
+        hermes_binary.as_path(),
+        osmosis_dir,
+        &[
             "create",
             "channel",
             "--a-chain",
@@ -394,8 +388,8 @@ fn configure_testnet_hermes_for_demo(
             "transfer",
             "--b-port",
             "transfer",
-        ])
-        .output()?;
+        ],
+    )?;
     if !create_channel_output.status.success() {
         return Err(format!(
             "Failed to create Entrypoint↔Osmosis transfer channel for chain {}:\n{}",
@@ -428,7 +422,10 @@ fn local_chain_profile() -> HermesCosmosChainProfile {
         id: osmosis_config::LOCAL_CHAIN_ID.to_string(),
         rpc_addr: osmosis_config::LOCAL_RPC_URL.to_string(),
         grpc_addr: "http://127.0.0.1:9094".to_string(),
-        event_source_url: "ws://127.0.0.1:26658/websocket".to_string(),
+        event_source: HermesEventSource::Push {
+            url: "ws://127.0.0.1:26658/websocket".to_string(),
+            batch_delay: "200ms",
+        },
         rpc_timeout: "10s",
         trusted_node: None,
         account_prefix: "osmo",
@@ -461,7 +458,10 @@ fn testnet_chain_profile() -> HermesCosmosChainProfile {
         id: osmosis_config::TESTNET_CHAIN_ID.to_string(),
         rpc_addr: osmosis_config::TESTNET_RPC_URL.to_string(),
         grpc_addr: osmosis_config::TESTNET_GRPC_URL.to_string(),
-        event_source_url: osmosis_config::TESTNET_EVENT_SOURCE_URL.to_string(),
+        event_source: HermesEventSource::Push {
+            url: osmosis_config::TESTNET_EVENT_SOURCE_URL.to_string(),
+            batch_delay: "200ms",
+        },
         rpc_timeout: "10s",
         trusted_node: None,
         account_prefix: "osmo",
@@ -494,10 +494,11 @@ fn chain_has_any_keys(
     working_dir: &Path,
     chain_id: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let output = Command::new(hermes_binary)
-        .current_dir(working_dir)
-        .args(["keys", "list", "--chain", chain_id])
-        .output()?;
+    let output = run_hermes_output(
+        hermes_binary,
+        working_dir,
+        &["keys", "list", "--chain", chain_id],
+    )?;
     if !output.status.success() {
         return Ok(false);
     }
@@ -522,10 +523,11 @@ fn chain_has_key_named(
     chain_id: &str,
     key_name: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let output = Command::new(hermes_binary)
-        .current_dir(working_dir)
-        .args(["keys", "list", "--chain", chain_id])
-        .output()?;
+    let output = run_hermes_output(
+        hermes_binary,
+        working_dir,
+        &["keys", "list", "--chain", chain_id],
+    )?;
     if !output.status.success() {
         return Ok(false);
     }
@@ -559,17 +561,10 @@ fn ensure_entrypoint_demo_key(
         return Ok(());
     }
 
-    let hermes_binary_str = hermes_binary.to_str().ok_or_else(|| {
-        format!(
-            "Hermes binary path is not valid UTF-8: {}",
-            hermes_binary.display()
-        )
-    })?;
-
-    execute_script(
+    run_hermes_output(
+        hermes_binary,
         osmosis_dir,
-        hermes_binary_str,
-        Vec::from([
+        &[
             "keys",
             "add",
             "--overwrite",
@@ -577,8 +572,7 @@ fn ensure_entrypoint_demo_key(
             entrypoint_chain_id().as_str(),
             "--mnemonic-file",
             osmosis_dir.join("scripts/hermes/cosmos").to_str().unwrap(),
-        ]),
-        None,
+        ],
     )?;
 
     Ok(())
@@ -607,10 +601,7 @@ fn create_client_with_retry(
             args.push(trusting_period);
         }
 
-        let output: Output = Command::new(hermes_binary)
-            .current_dir(working_dir)
-            .args(args.as_slice())
-            .output()?;
+        let output: Output = run_hermes_output(hermes_binary, working_dir, args.as_slice())?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         if output.status.success() {
@@ -657,9 +648,10 @@ fn has_open_transfer_channel(
     chain_id: &str,
     counterparty_chain_id: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let output = Command::new(hermes_binary)
-        .current_dir(working_dir)
-        .args([
+    let output = run_hermes_output(
+        hermes_binary,
+        working_dir,
+        &[
             "--json",
             "query",
             "channels",
@@ -667,8 +659,8 @@ fn has_open_transfer_channel(
             chain_id,
             "--counterparty-chain",
             counterparty_chain_id,
-        ])
-        .output()?;
+        ],
+    )?;
 
     if !output.status.success() {
         verbose(&format!(
@@ -736,7 +728,9 @@ fn is_open_transfer_channel_entry(value: &Value) -> bool {
     local_port_id == "transfer" || remote_port_id == "transfer"
 }
 
-fn resolve_local_hermes_binary(osmosis_dir: &Path) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
+fn resolve_local_hermes_binary(
+    osmosis_dir: &Path,
+) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     let configured_project_root = std::path::PathBuf::from(config::get_config().project_root);
     hermes_support::resolve_local_hermes_binary(configured_project_root.as_path(), osmosis_dir)
         .ok_or_else(|| {
@@ -746,4 +740,14 @@ fn resolve_local_hermes_binary(osmosis_dir: &Path) -> Result<std::path::PathBuf,
             )
             .into()
         })
+}
+
+fn run_hermes_output(
+    hermes_binary: &Path,
+    working_dir: &Path,
+    args: &[&str],
+) -> Result<Output, Box<dyn std::error::Error>> {
+    HermesCli::new(hermes_binary)
+        .output(Some(working_dir), args)
+        .map_err(Into::into)
 }

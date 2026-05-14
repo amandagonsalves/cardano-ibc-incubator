@@ -8,14 +8,18 @@ import { ChannelService } from '~@/query/services/channel.service';
 import { PacketService } from '~@/tx/packet.service';
 import { MsgTransfer } from '@plus/proto-types/build/ibc/core/channel/v1/tx';
 import { DenomTraceService } from '~@/query/services/denom-trace.service';
+import { CheqdIcqService } from './cheqd-icq.service';
+import { VesseloracleIcqService } from './vesseloracle-icq.service';
 import { LocalOsmosisSwapPlannerService } from './swap-planner.service';
 import { TransferPlannerService } from './transfer-planner.service';
 import { BridgeManifestService } from '~@/query/services/bridge-manifest.service';
+import { QueryService } from '~@/query/services/query.service';
 
 describe('ApiController (modern)', () => {
   let controller: ApiController;
   let channelServiceMock: {
     queryChannels: jest.Mock;
+    getChannelHealth: jest.Mock;
   };
   let packetServiceMock: {
     sendPacket: jest.Mock;
@@ -28,11 +32,27 @@ describe('ApiController (modern)', () => {
     getSwapOptions: jest.Mock;
     estimateSwap: jest.Mock;
   };
+  let cheqdIcqServiceMock: {
+    buildDidDocQuery: jest.Mock;
+    decodeDidDocAcknowledgement: jest.Mock;
+    findResult: jest.Mock;
+  };
+  let vesseloracleIcqServiceMock: {
+    buildConsolidatedDataReportQuery: jest.Mock;
+    buildLatestConsolidatedDataReportQuery: jest.Mock;
+    decodeConsolidatedDataReportAcknowledgement: jest.Mock;
+    decodeLatestConsolidatedDataReportAcknowledgement: jest.Mock;
+    findResult: jest.Mock;
+  };
   let transferPlannerServiceMock: {
     planTransferRoute: jest.Mock;
   };
   let bridgeManifestServiceMock: {
     getBridgeManifest: jest.Mock;
+  };
+  let queryServiceMock: {
+    queryPacketEventsByTxHash: jest.Mock;
+    queryPacketEventsByPacket: jest.Mock;
   };
 
   beforeEach(async () => {
@@ -40,6 +60,7 @@ describe('ApiController (modern)', () => {
     // Channel/packet services are mocked so external IBC logic is out of scope here.
     channelServiceMock = {
       queryChannels: jest.fn(),
+      getChannelHealth: jest.fn(),
     };
     packetServiceMock = {
       sendPacket: jest.fn(),
@@ -52,11 +73,27 @@ describe('ApiController (modern)', () => {
       getSwapOptions: jest.fn(),
       estimateSwap: jest.fn(),
     };
+    cheqdIcqServiceMock = {
+      buildDidDocQuery: jest.fn(),
+      decodeDidDocAcknowledgement: jest.fn(),
+      findResult: jest.fn(),
+    };
+    vesseloracleIcqServiceMock = {
+      buildConsolidatedDataReportQuery: jest.fn(),
+      buildLatestConsolidatedDataReportQuery: jest.fn(),
+      decodeConsolidatedDataReportAcknowledgement: jest.fn(),
+      decodeLatestConsolidatedDataReportAcknowledgement: jest.fn(),
+      findResult: jest.fn(),
+    };
     transferPlannerServiceMock = {
       planTransferRoute: jest.fn(),
     };
     bridgeManifestServiceMock = {
       getBridgeManifest: jest.fn(),
+    };
+    queryServiceMock = {
+      queryPacketEventsByTxHash: jest.fn(),
+      queryPacketEventsByPacket: jest.fn(),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -66,8 +103,11 @@ describe('ApiController (modern)', () => {
         { provide: PacketService, useValue: packetServiceMock },
         { provide: DenomTraceService, useValue: denomTraceServiceMock },
         { provide: LocalOsmosisSwapPlannerService, useValue: swapPlannerServiceMock },
+        { provide: CheqdIcqService, useValue: cheqdIcqServiceMock },
+        { provide: VesseloracleIcqService, useValue: vesseloracleIcqServiceMock },
         { provide: TransferPlannerService, useValue: transferPlannerServiceMock },
         { provide: BridgeManifestService, useValue: bridgeManifestServiceMock },
+        { provide: QueryService, useValue: queryServiceMock },
       ],
     }).compile();
 
@@ -96,6 +136,18 @@ describe('ApiController (modern)', () => {
         revision_number: '7',
       },
     });
+  });
+
+  it('delegates Cardano channel health lookups to ChannelService', async () => {
+    const expected = {
+      port_id: 'transfer',
+      channel_id: 'channel-0',
+      status: 'available',
+    };
+    channelServiceMock.getChannelHealth.mockResolvedValue(expected);
+
+    await expect(controller.getCardanoChannelHealth('channel-0', 'transfer')).resolves.toBe(expected);
+    expect(channelServiceMock.getChannelHealth).toHaveBeenCalledWith('channel-0', 'transfer');
   });
 
   it('delegates buildTransferMsg to PacketService and base64-encodes unsigned tx bytes', async () => {
@@ -131,6 +183,211 @@ describe('ApiController (modern)', () => {
       unsigned_tx: {
         type_url: '/ibc.core.channel.v1.MsgTransfer',
         value: Buffer.from([0xde, 0xad, 0xbe, 0xef]).toString('base64'),
+      },
+    });
+  });
+
+  it('delegates cheqd DidDoc ICQ tx building to CheqdIcqService', async () => {
+    cheqdIcqServiceMock.buildDidDocQuery.mockResolvedValue({
+      query_path: '/cheqd.did.v2.Query/DidDoc',
+      source_port: 'icqhost',
+      source_channel: 'channel-9',
+      packet_sequence: '7',
+      packet_data_hex: 'deadbeef',
+      tx: {
+        result: 1,
+        unsigned_tx: {
+          type_url: '/ibc.core.channel.v1.MsgTransfer',
+          value: Buffer.from([1, 2, 3]),
+        },
+      },
+    });
+
+    await expect(
+      controller.buildCheqdDidDocIcq({
+        source_channel: 'channel-9',
+        signer: 'addr_test1q...',
+        id: 'did:cheqd:testnet:abc123',
+      } as any),
+    ).resolves.toEqual({
+      query_path: '/cheqd.did.v2.Query/DidDoc',
+      source_port: 'icqhost',
+      source_channel: 'channel-9',
+      packet_sequence: '7',
+      packet_data_hex: 'deadbeef',
+      result: 1,
+      unsigned_tx: {
+        type_url: '/ibc.core.channel.v1.MsgTransfer',
+        value: Buffer.from([1, 2, 3]).toString('base64'),
+      },
+    });
+  });
+
+  it('delegates cheqd DidDoc acknowledgement decoding to CheqdIcqService', async () => {
+    cheqdIcqServiceMock.decodeDidDocAcknowledgement.mockReturnValue({
+      status: 'success',
+      response: { value: { did_doc: { id: 'did:cheqd:testnet:abc123' } } },
+    });
+
+    await expect(
+      controller.decodeCheqdDidDocIcq({
+        acknowledgement_hex: '7b22726573756c74223a2241513d3d227d',
+      } as any),
+    ).resolves.toEqual({
+      status: 'success',
+      response: { value: { did_doc: { id: 'did:cheqd:testnet:abc123' } } },
+    });
+  });
+
+  it('delegates vesseloracle consolidated-data-report ICQ tx building to VesseloracleIcqService', async () => {
+    vesseloracleIcqServiceMock.buildConsolidatedDataReportQuery.mockResolvedValue({
+      query_path: '/vesseloracle.vesseloracle.Query/ConsolidatedDataReport',
+      source_port: 'icqhost',
+      source_channel: 'channel-4',
+      packet_sequence: '8',
+      packet_data_hex: 'beadfeed',
+      tx: {
+        result: 1,
+        unsigned_tx: {
+          type_url: '/ibc.core.channel.v1.MsgTransfer',
+          value: Buffer.from([4, 5, 6]),
+        },
+      },
+    });
+
+    await expect(
+      controller.buildVesseloracleConsolidatedDataReportIcq({
+        source_channel: 'channel-4',
+        signer: 'addr_test1q...',
+        imo: '9525338',
+        ts: '1713110400',
+      } as any),
+    ).resolves.toEqual({
+      query_path: '/vesseloracle.vesseloracle.Query/ConsolidatedDataReport',
+      source_port: 'icqhost',
+      source_channel: 'channel-4',
+      packet_sequence: '8',
+      packet_data_hex: 'beadfeed',
+      result: 1,
+      unsigned_tx: {
+        type_url: '/ibc.core.channel.v1.MsgTransfer',
+        value: Buffer.from([4, 5, 6]).toString('base64'),
+      },
+    });
+  });
+
+  it('delegates vesseloracle latest-consolidated-data-report ICQ tx building to VesseloracleIcqService', async () => {
+    vesseloracleIcqServiceMock.buildLatestConsolidatedDataReportQuery.mockResolvedValue({
+      query_path: '/vesseloracle.vesseloracle.Query/LatestConsolidatedDataReport',
+      source_port: 'icqhost',
+      source_channel: 'channel-5',
+      packet_sequence: '9',
+      packet_data_hex: 'cafebabe',
+      tx: {
+        result: 1,
+        unsigned_tx: {
+          type_url: '/ibc.core.channel.v1.MsgTransfer',
+          value: Buffer.from([7, 8, 9]),
+        },
+      },
+    });
+
+    await expect(
+      controller.buildVesseloracleLatestConsolidatedDataReportIcq({
+        source_channel: 'channel-5',
+        signer: 'addr_test1q...',
+        imo: '9525338',
+      } as any),
+    ).resolves.toEqual({
+      query_path: '/vesseloracle.vesseloracle.Query/LatestConsolidatedDataReport',
+      source_port: 'icqhost',
+      source_channel: 'channel-5',
+      packet_sequence: '9',
+      packet_data_hex: 'cafebabe',
+      result: 1,
+      unsigned_tx: {
+        type_url: '/ibc.core.channel.v1.MsgTransfer',
+        value: Buffer.from([7, 8, 9]).toString('base64'),
+      },
+    });
+  });
+
+  it('delegates cheqd ICQ result polling to CheqdIcqService', async () => {
+    cheqdIcqServiceMock.findResult.mockResolvedValue({
+      status: 'completed',
+      tx_hash: 'deadbeef',
+      query_path: '/cheqd.did.v2.Query/DidDoc',
+      packet_data_hex: 'c0ffee',
+      current_height: '120',
+      next_search_from_height: '118',
+      completed_height: '118',
+      packet_sequence: '7',
+      acknowledgement_hex: 'bead',
+      acknowledgement: {
+        status: 'success',
+        response: { value: { did_doc: { id: 'did:cheqd:testnet:abc123' } } },
+      },
+    });
+
+    await expect(
+      controller.getCheqdIcqResult({
+        tx_hash: 'deadbeef',
+        query_path: '/cheqd.did.v2.Query/DidDoc',
+        packet_data_hex: 'c0ffee',
+      } as any),
+    ).resolves.toEqual({
+      status: 'completed',
+      tx_hash: 'deadbeef',
+      query_path: '/cheqd.did.v2.Query/DidDoc',
+      packet_data_hex: 'c0ffee',
+      current_height: '120',
+      next_search_from_height: '118',
+      completed_height: '118',
+      packet_sequence: '7',
+      acknowledgement_hex: 'bead',
+      acknowledgement: {
+        status: 'success',
+        response: { value: { did_doc: { id: 'did:cheqd:testnet:abc123' } } },
+      },
+    });
+  });
+
+  it('delegates vesseloracle ICQ result polling to VesseloracleIcqService', async () => {
+    vesseloracleIcqServiceMock.findResult.mockResolvedValue({
+      status: 'completed',
+      tx_hash: 'deadbeef',
+      query_path: '/vesseloracle.vesseloracle.Query/ConsolidatedDataReport',
+      packet_data_hex: 'c0ffee',
+      current_height: '120',
+      next_search_from_height: '118',
+      completed_height: '118',
+      packet_sequence: '7',
+      acknowledgement_hex: 'bead',
+      acknowledgement: {
+        status: 'success',
+        response: { consolidatedDataReport: { imo: '9525338', ts: '1713110400' } },
+      },
+    });
+
+    await expect(
+      controller.getVesseloracleIcqResult({
+        tx_hash: 'deadbeef',
+        query_path: '/vesseloracle.vesseloracle.Query/ConsolidatedDataReport',
+        packet_data_hex: 'c0ffee',
+      } as any),
+    ).resolves.toEqual({
+      status: 'completed',
+      tx_hash: 'deadbeef',
+      query_path: '/vesseloracle.vesseloracle.Query/ConsolidatedDataReport',
+      packet_data_hex: 'c0ffee',
+      current_height: '120',
+      next_search_from_height: '118',
+      completed_height: '118',
+      packet_sequence: '7',
+      acknowledgement_hex: 'bead',
+      acknowledgement: {
+        status: 'success',
+        response: { consolidatedDataReport: { imo: '9525338', ts: '1713110400' } },
       },
     });
   });
@@ -216,23 +473,37 @@ describe('ApiController (modern)', () => {
       base_denom: Buffer.from('lovelace', 'utf8').toString('hex'),
       full_denom: 'lovelace',
       voucher_token_name: null,
+      cip68_reference_asset_id: null,
       voucher_policy_id: null,
       ibc_denom_hash: null,
       display_name: 'ADA',
       display_symbol: 'ADA',
       display_description: 'Cardano native asset lovelace',
+      description: null,
+      ticker: null,
+      decimals: null,
+      url: null,
+      logo: null,
+      metadata_version: null,
     });
   });
 
   it('returns a persisted voucher trace when policy id and voucher token match', async () => {
     const voucherPolicyId = 'a'.repeat(56);
-    const voucherTokenName = 'b'.repeat(64);
+    const voucherTokenName = `0014df10${'b'.repeat(56)}`;
     denomTraceServiceMock.findByHash.mockResolvedValue({
-      hash: voucherTokenName,
+      hash: 'b'.repeat(56),
       path: 'transfer/channel-7',
       base_denom: 'uatom',
+      full_denom: 'transfer/channel-7/uatom',
+      voucher_token_name: voucherTokenName,
+      voucher_reference_token_name: `000643b0${'b'.repeat(56)}`,
       voucher_policy_id: voucherPolicyId.toUpperCase(),
       ibc_denom_hash: 'c'.repeat(64),
+      cip68_reference_asset_id: `${voucherPolicyId}${`000643b0${'b'.repeat(56)}`}`,
+      name: 'uatom',
+      description: 'IBC voucher for transfer/channel-7/uatom',
+      ticker: 'uatom',
     });
 
     const response = await controller.getCardanoAssetDenomTrace(`${voucherPolicyId}${voucherTokenName}`);
@@ -245,11 +516,18 @@ describe('ApiController (modern)', () => {
       base_denom: 'uatom',
       full_denom: 'transfer/channel-7/uatom',
       voucher_token_name: voucherTokenName,
+      cip68_reference_asset_id: `${voucherPolicyId}${`000643b0${'b'.repeat(56)}`}`,
       voucher_policy_id: voucherPolicyId.toUpperCase(),
       ibc_denom_hash: 'c'.repeat(64),
-      display_name: 'ATOM (IBC)',
-      display_symbol: 'ATOM',
+      display_name: 'uatom',
+      display_symbol: 'uatom',
       display_description: 'IBC voucher for transfer/channel-7/uatom',
+      description: 'IBC voucher for transfer/channel-7/uatom',
+      ticker: 'uatom',
+      decimals: null,
+      url: null,
+      logo: null,
+      metadata_version: null,
     });
   });
 
@@ -266,11 +544,18 @@ describe('ApiController (modern)', () => {
       base_denom: nativeAssetId,
       full_denom: nativeAssetId,
       voucher_token_name: null,
+      cip68_reference_asset_id: null,
       voucher_policy_id: null,
       ibc_denom_hash: null,
       display_name: nativeAssetId,
       display_symbol: nativeAssetId,
       display_description: `Cardano native asset ${nativeAssetId}`,
+      description: null,
+      ticker: null,
+      decimals: null,
+      url: null,
+      logo: null,
+      metadata_version: null,
     });
   });
 
@@ -282,11 +567,18 @@ describe('ApiController (modern)', () => {
   it('lists persisted ibc voucher assets through the http api', async () => {
     denomTraceServiceMock.findAll.mockResolvedValue([
       {
-        hash: 'e'.repeat(64),
+        hash: 'e'.repeat(56),
         path: 'transfer/channel-3',
         base_denom: 'gamm/pool/1',
+        full_denom: 'transfer/channel-3/gamm/pool/1',
+        voucher_token_name: `0014df10${'e'.repeat(56)}`,
+        voucher_reference_token_name: `000643b0${'e'.repeat(56)}`,
         voucher_policy_id: 'f'.repeat(56),
         ibc_denom_hash: '1'.repeat(64),
+        cip68_reference_asset_id: `${'f'.repeat(56)}${`000643b0${'e'.repeat(56)}`}`,
+        name: '1',
+        description: 'IBC voucher for transfer/channel-3/gamm/pool/1',
+        ticker: '1',
       },
     ]);
 
@@ -295,17 +587,24 @@ describe('ApiController (modern)', () => {
     expect(denomTraceServiceMock.findAll).toHaveBeenCalled();
     expect(response).toEqual([
       {
-        asset_id: `${'f'.repeat(56)}${'e'.repeat(64)}`,
+        asset_id: `${'f'.repeat(56)}${`0014df10${'e'.repeat(56)}`}`,
         kind: 'ibc_voucher',
         path: 'transfer/channel-3',
         base_denom: 'gamm/pool/1',
         full_denom: 'transfer/channel-3/gamm/pool/1',
-        voucher_token_name: 'e'.repeat(64),
+        voucher_token_name: `0014df10${'e'.repeat(56)}`,
+        cip68_reference_asset_id: `${'f'.repeat(56)}${`000643b0${'e'.repeat(56)}`}`,
         voucher_policy_id: 'f'.repeat(56),
         ibc_denom_hash: '1'.repeat(64),
-        display_name: '1 (IBC)',
+        display_name: '1',
         display_symbol: '1',
         display_description: 'IBC voucher for transfer/channel-3/gamm/pool/1',
+        description: 'IBC voucher for transfer/channel-3/gamm/pool/1',
+        ticker: '1',
+        decimals: null,
+        url: null,
+        logo: null,
+        metadata_version: null,
       },
     ]);
   });
@@ -327,6 +626,37 @@ describe('ApiController (modern)', () => {
       to_tokens: [{ token_id: 'uosmo', token_name: 'uosmo', token_logo: null }],
     });
     expect(swapPlannerServiceMock.getSwapOptions).toHaveBeenCalled();
+  });
+
+  it('delegates Cardano tx packet-event lookups to QueryService', async () => {
+    queryServiceMock.queryPacketEventsByTxHash.mockResolvedValue({
+      tx_hash: 'abc',
+      height: '123',
+      indexed: true,
+      events: [],
+    });
+
+    await expect(controller.getCardanoTxPacketEvents('abc')).resolves.toEqual({
+      tx_hash: 'abc',
+      height: '123',
+      indexed: true,
+      events: [],
+    });
+    expect(queryServiceMock.queryPacketEventsByTxHash).toHaveBeenCalledWith('abc');
+  });
+
+  it('delegates Cardano packet-event searches to QueryService', async () => {
+    queryServiceMock.queryPacketEventsByPacket.mockResolvedValue({ events: [] });
+
+    await expect(
+      controller.getCardanoPacketEvents('channel-1', 'channel-2', '7', 'acknowledge_packet'),
+    ).resolves.toEqual({ events: [] });
+    expect(queryServiceMock.queryPacketEventsByPacket).toHaveBeenCalledWith({
+      sourceChannel: 'channel-1',
+      destinationChannel: 'channel-2',
+      sequence: '7',
+      eventType: 'acknowledge_packet',
+    });
   });
 
   it('delegates local Osmosis swap estimates to LocalOsmosisSwapPlannerService', async () => {

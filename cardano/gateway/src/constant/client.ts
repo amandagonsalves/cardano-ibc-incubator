@@ -15,6 +15,7 @@ export const ATTRIBUTE_KEY_CLIENT = {
   CONSENSUS_HEIGHT: 'consensus_height',
   CONSENSUS_HEIGHTS: 'consensus_heights',
   HEADER: 'header',
+  CLIENT_MESSAGE_ANY_HEX: 'client_message_any_hex',
   UPGRADE_STORE: 'upgrade_store',
   UPGRADE_PLAN_HEIGHT: 'upgrade_plan_height',
   title: 'title',
@@ -22,7 +23,5 @@ export const ATTRIBUTE_KEY_CLIENT = {
 // Cardano stores Tendermint clients using the canonical IBC client identifier format:
 // `07-tendermint-{sequence}`.
 export const CLIENT_ID_PREFIX = '07-tendermint';
-export const KEY_CLIENT_PREFIX = 'clients';
-export const KEY_CLIENT_STATE = 'clientState';
 
 export const MAX_CONSENSUS_STATE_SIZE = 300;

@@ -46,6 +46,7 @@ use ibc/core/ics_023_vector_commitments/ics23/proofs.{
 }
 use ibc/core/ics_023_vector_commitments/merkle.{MerkleProof, MerkleRoot}
 use ibc/core/ics_023_vector_commitments/merkle_prefix.{MerklePrefix}
+use ibc/core/ics_025_handler_interface/host_state_redeemer as host_state_redeemer
 use ibc/utils/validator_utils
 use spending_channel
 
@@ -68,7 +69,7 @@ type MockData {
   acknowledge_packet_policy_id: PolicyId,
   channel_sequence: ByteArray,
   channel_token: AuthToken,
-  handler_token: AuthToken,
+  base_token: AuthToken,
   connection_id: ByteArray,
   connection_input: Input,
   client_input: Input,
@@ -99,10 +100,10 @@ fn setup() -> MockData {
       output: host_state_output,
     }
 
-  let handler_token =
+  let base_token =
     AuthToken {
-      name: "mock handler token name",
-      policy_id: "mock handler token policy_id",
+      name: "mock base token name",
+      policy_id: "mock base token policy_id",
     }
 
   //========================Channel============================
@@ -111,7 +112,7 @@ fn setup() -> MockData {
 
   let channel_token_name =
     auth.generate_token_name(
-      handler_token,
+      base_token,
       channel_keys.channel_prefix,
       channel_sequence,
     )
@@ -147,7 +148,7 @@ fn setup() -> MockData {
 
   let connection_token_name =
     auth.generate_token_name(
-      handler_token,
+      base_token,
       conn_keys_mod.connection_prefix,
       connection_sequence,
     )
@@ -247,7 +248,7 @@ fn setup() -> MockData {
 
   let client_token_name =
     auth.generate_token_name(
-      handler_token,
+      base_token,
       client_keys_mod.client_prefix,
       client_sequence,
     )
@@ -293,11 +294,7 @@ fn setup() -> MockData {
   let port_id = "port-1"
   let port_number = port_keys_mod.parse_port_id_number(port_id)
   let port_token_name =
-    auth.generate_token_name(
-      handler_token,
-      port_keys_mod.port_prefix,
-      port_number,
-    )
+    auth.generate_token_name(base_token, port_keys_mod.port_prefix, port_number)
   let port_token =
     AuthToken { policy_id: port_minting_policy_id, name: port_token_name }
 
@@ -334,7 +331,7 @@ fn setup() -> MockData {
     acknowledge_packet_policy_id: "mock acknowledge_packet_policy_id",
     channel_sequence,
     channel_token,
-    handler_token,
+    base_token,
     connection_id,
     connection_input,
     client_input,
@@ -377,6 +374,26 @@ fn build_channel_input(
   channel_input
 }
 
+fn host_state_update_channel_redeemer() -> Redeemer {
+  let redeemer: Redeemer =
+    host_state_redeemer.UpdateChannel { channel_siblings: [] }
+  redeemer
+}
+
+fn host_state_handle_packet_redeemer() -> Redeemer {
+  let redeemer: Redeemer =
+    host_state_redeemer.HandlePacket {
+      channel_siblings: [],
+      next_sequence_send_siblings: [],
+      next_sequence_recv_siblings: [],
+      next_sequence_ack_siblings: [],
+      packet_commitment_siblings: [],
+      packet_receipt_siblings: [],
+      packet_acknowledgement_siblings: [],
+    }
+  redeemer
+}
+
 fn update_client(
   height: Height,
   consensus_state: ConsensusState,
@@ -401,7 +418,7 @@ fn update_client(
       state: ClientDatumState {
         client_state: ClientState {
           ..client_datum.state.client_state,
-          latest_height: latest_height,
+          latest_height,
         },
         consensus_states: [
           Pair(height, consensus_state),
@@ -467,7 +484,8 @@ test chan_open_ack_succeed() {
 
   let channel_input =
     build_channel_input(input_channel_datum, mock_data.channel_token)
-  let inputs = [mock_data.module_input, channel_input, mock_data.host_state_input]
+  let inputs =
+    [mock_data.module_input, channel_input, mock_data.host_state_input]
 
   //========================arrange reference_inputs=======================
   let proof_height = Height { revision_number: 1, revision_height: 14 }
@@ -626,6 +644,10 @@ test chan_open_ack_succeed() {
     [
       Pair(Spend(mock_data.module_input.output_reference), module_redeemer),
       Pair(Spend(channel_input.output_reference), spend_channel_redeemer),
+      Pair(
+        Spend(mock_data.host_state_input.output_reference),
+        host_state_update_channel_redeemer(),
+      ),
       Pair(Mint(mock_data.chan_open_ack_policy_id), chan_open_ack_redeemer),
     ]
 
@@ -636,11 +658,11 @@ test chan_open_ack_succeed() {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
-      reference_inputs: reference_inputs,
-      outputs: outputs,
-      redeemers: redeemers,
-      validity_range: validity_range,
+      inputs,
+      reference_inputs,
+      outputs,
+      redeemers,
+      validity_range,
     }
 
   spending_channel.spend_channel.spend(
@@ -694,7 +716,8 @@ test chan_open_confirm_succeed() {
   let channel_input =
     build_channel_input(input_channel_datum, mock_data.channel_token)
 
-  let inputs = [mock_data.module_input, channel_input, mock_data.host_state_input]
+  let inputs =
+    [mock_data.module_input, channel_input, mock_data.host_state_input]
 
   //========================arrange reference_inputs=======================
   let proof_height = Height { revision_number: 1, revision_height: 16 }
@@ -839,6 +862,10 @@ test chan_open_confirm_succeed() {
       Pair(Spend(mock_data.module_input.output_reference), module_redeemer),
       Pair(Spend(channel_input.output_reference), spend_channel_redeemer),
       Pair(
+        Spend(mock_data.host_state_input.output_reference),
+        host_state_update_channel_redeemer(),
+      ),
+      Pair(
         Mint(mock_data.chan_open_confirm_policy_id),
         chan_open_confirm_redeemer,
       ),
@@ -850,11 +877,11 @@ test chan_open_confirm_succeed() {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
-      reference_inputs: reference_inputs,
-      outputs: outputs,
-      redeemers: redeemers,
-      validity_range: validity_range,
+      inputs,
+      reference_inputs,
+      outputs,
+      redeemers,
+      validity_range,
     }
 
   spending_channel.spend_channel.spend(
@@ -908,7 +935,8 @@ test recv_packet_succeed() {
   let channel_input =
     build_channel_input(input_channel_datum, mock_data.channel_token)
 
-  let inputs = [mock_data.module_input, channel_input, mock_data.host_state_input]
+  let inputs =
+    [mock_data.module_input, channel_input, mock_data.host_state_input]
 
   //========================arrange reference_inputs=======================
   let proof_height = Height { revision_number: 1, revision_height: 19 }
@@ -1080,6 +1108,10 @@ test recv_packet_succeed() {
     [
       Pair(Spend(mock_data.module_input.output_reference), module_redeemer),
       Pair(Spend(channel_input.output_reference), spend_channel_redeemer),
+      Pair(
+        Spend(mock_data.host_state_input.output_reference),
+        host_state_handle_packet_redeemer(),
+      ),
       Pair(Mint(mock_data.recv_packet_policy_id), recv_packet_redeemer),
     ]
 
@@ -1090,11 +1122,11 @@ test recv_packet_succeed() {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
-      reference_inputs: reference_inputs,
-      outputs: outputs,
-      redeemers: redeemers,
-      validity_range: validity_range,
+      inputs,
+      reference_inputs,
+      outputs,
+      redeemers,
+      validity_range,
     }
 
   spending_channel.spend_channel.spend(
@@ -1160,7 +1192,8 @@ test send_packet_succeed() {
   let channel_input =
     build_channel_input(input_channel_datum, mock_data.channel_token)
 
-  let inputs = [mock_data.module_input, channel_input, mock_data.host_state_input]
+  let inputs =
+    [mock_data.module_input, channel_input, mock_data.host_state_input]
 
   //========================arrange reference_inputs=======================
   let reference_inputs = [mock_data.connection_input, mock_data.client_input]
@@ -1200,6 +1233,10 @@ test send_packet_succeed() {
     [
       Pair(Spend(mock_data.module_input.output_reference), module_redeemer),
       Pair(Spend(channel_input.output_reference), spend_channel_redeemer),
+      Pair(
+        Spend(mock_data.host_state_input.output_reference),
+        host_state_handle_packet_redeemer(),
+      ),
       Pair(Mint(mock_data.send_packet_policy_id), send_packet_redeemer),
     ]
 
@@ -1209,11 +1246,11 @@ test send_packet_succeed() {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
-      reference_inputs: reference_inputs,
-      outputs: outputs,
-      redeemers: redeemers,
-      validity_range: validity_range,
+      inputs,
+      reference_inputs,
+      outputs,
+      redeemers,
+      validity_range,
     }
 
   spending_channel.spend_channel.spend(
@@ -1283,7 +1320,8 @@ test timeout_packet_succeed() {
   let channel_input =
     build_channel_input(input_channel_datum, mock_data.channel_token)
 
-  let inputs = [mock_data.module_input, channel_input, mock_data.host_state_input]
+  let inputs =
+    [mock_data.module_input, channel_input, mock_data.host_state_input]
 
   //========================arrange reference_inputs=======================
   let proof_height =
@@ -1457,6 +1495,10 @@ test timeout_packet_succeed() {
     [
       Pair(Spend(mock_data.module_input.output_reference), module_redeemer),
       Pair(Spend(channel_input.output_reference), spend_channel_redeemer),
+      Pair(
+        Spend(mock_data.host_state_input.output_reference),
+        host_state_handle_packet_redeemer(),
+      ),
       Pair(Mint(mock_data.timeout_packet_policy_id), timeout_packet_redeemer),
     ]
 
@@ -1472,11 +1514,11 @@ test timeout_packet_succeed() {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
-      reference_inputs: reference_inputs,
-      outputs: outputs,
-      redeemers: redeemers,
-      validity_range: validity_range,
+      inputs,
+      reference_inputs,
+      outputs,
+      redeemers,
+      validity_range,
     }
 
   spending_channel.spend_channel.spend(
@@ -1544,7 +1586,8 @@ test acknowledge_packet_succeed() {
   let channel_input =
     build_channel_input(input_channel_datum, mock_data.channel_token)
 
-  let inputs = [mock_data.module_input, channel_input, mock_data.host_state_input]
+  let inputs =
+    [mock_data.module_input, channel_input, mock_data.host_state_input]
 
   //========================arrange reference_inputs=======================
   let proof_height = Height { revision_number: 1, revision_height: 20 }
@@ -1706,6 +1749,10 @@ test acknowledge_packet_succeed() {
       Pair(Spend(mock_data.module_input.output_reference), module_redeemer),
       Pair(Spend(channel_input.output_reference), spend_channel_redeemer),
       Pair(
+        Spend(mock_data.host_state_input.output_reference),
+        host_state_handle_packet_redeemer(),
+      ),
+      Pair(
         Mint(mock_data.acknowledge_packet_policy_id),
         acknowledge_packet_redeemer,
       ),
@@ -1723,11 +1770,11 @@ test acknowledge_packet_succeed() {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
-      reference_inputs: reference_inputs,
-      outputs: outputs,
-      redeemers: redeemers,
-      validity_range: validity_range,
+      inputs,
+      reference_inputs,
+      outputs,
+      redeemers,
+      validity_range,
     }
 
   spending_channel.spend_channel.spend(
@@ -1787,15 +1834,21 @@ test chan_close_init_succeed() {
   let chan_close_init_redeemer: Redeemer = fake_data.channel_token
 
   let redeemers: Pairs<ScriptPurpose, Redeemer> =
-    [Pair(Mint(fake_data.chan_close_init_policy_id), chan_close_init_redeemer)]
+    [
+      Pair(
+        Spend(fake_data.host_state_input.output_reference),
+        host_state_update_channel_redeemer(),
+      ),
+      Pair(Mint(fake_data.chan_close_init_policy_id), chan_close_init_redeemer),
+    ]
 
   //==========================arrange context=========================
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
+      inputs,
       outputs: [fake_data.host_state_output],
-      redeemers: redeemers,
+      redeemers,
     }
 
   let spend_channel_redeemer = ChanCloseInit
@@ -1857,12 +1910,7 @@ test chan_close_init_fails_without_host_state_co_spend() fail {
   let redeemers: Pairs<ScriptPurpose, Redeemer> =
     [Pair(Mint(fake_data.chan_close_init_policy_id), chan_close_init_redeemer)]
 
-  let transaction =
-    Transaction {
-      ..transaction.placeholder,
-      inputs: inputs,
-      redeemers: redeemers,
-    }
+  let transaction = Transaction { ..transaction.placeholder, inputs, redeemers }
 
   let spend_channel_redeemer = ChanCloseInit
 
@@ -1925,6 +1973,10 @@ test chan_close_confirm_succeed() {
   let redeemers: Pairs<ScriptPurpose, Redeemer> =
     [
       Pair(
+        Spend(fake_data.host_state_input.output_reference),
+        host_state_update_channel_redeemer(),
+      ),
+      Pair(
         Mint(fake_data.chan_close_confirm_policy_id),
         chan_close_init_redeemer,
       ),
@@ -1934,9 +1986,9 @@ test chan_close_confirm_succeed() {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
+      inputs,
       outputs: [fake_data.host_state_output],
-      redeemers: redeemers,
+      redeemers,
     }
 
   let proof_init = MerkleProof { proofs: [] }

@@ -17,11 +17,7 @@ use ibc/client/ics_007_tendermint_client/consensus_state.{ConsensusState}
 use ibc/client/ics_007_tendermint_client/height.{Height} as height_mod
 use ibc/client/ics_007_tendermint_client/types/unchecked_rational
 use ibc/client/ics_007_tendermint_client/types/verify_proof_redeemer.{
-  BatchVerifyMembership, VerifyMembershipParams,
-}
-use ibc/client/mithril_client/protos/mithril_pb.{
-  AnyMithrilClientState, CardanoHeight, Fraction, MithrilClientState,
-  MithrilProtocolParameters,
+  VerifyMembership,
 }
 use ibc/core/ics_002_client_semantics/types/keys as client_keys_mod
 use ibc/core/ics_003_connection_semantics/connection_datum.{ConnectionDatum}
@@ -39,8 +35,8 @@ use ibc/core/ics_023_vector_commitments/ics23/proofs.{
 }
 use ibc/core/ics_023_vector_commitments/merkle.{MerkleProof, MerkleRoot}
 use ibc/core/ics_023_vector_commitments/merkle_prefix.{MerklePrefix}
-use ibc/core/ics_024_host_requirements/client_keys
 use ibc/core/ics_024_host_requirements/connection_keys.{default_merkle_prefix}
+use ibc/core/ics_025_handler_interface/host_state_redeemer as host_state_redeemer
 use ibc/utils/test_utils
 use ibc/utils/validator_utils
 use spending_connection
@@ -54,7 +50,7 @@ type MockData {
   spend_connection_script_hash: Hash<Blake2b_224, Script>,
   connection_id: ByteArray,
   connection_token: AuthToken,
-  handler_token: AuthToken,
+  base_token: AuthToken,
   client_id: ByteArray,
   client_input: Input,
   validity_range: ValidityRange,
@@ -82,10 +78,10 @@ fn setup() -> MockData {
       output: host_state_output,
     }
 
-  let handler_token =
+  let base_token =
     AuthToken {
-      name: "mock handler token name",
-      policy_id: "mock handler token policy_id",
+      name: "mock base token name",
+      policy_id: "mock base token policy_id",
     }
 
   //========================Client============================
@@ -160,7 +156,7 @@ fn setup() -> MockData {
 
   let client_token_name =
     auth.generate_token_name(
-      handler_token,
+      base_token,
       client_keys_mod.client_prefix,
       client_sequence,
     )
@@ -206,7 +202,7 @@ fn setup() -> MockData {
     conn_keys.parse_connection_id_sequence(connection_id)
   let connection_token_name =
     auth.generate_token_name(
-      handler_token,
+      base_token,
       conn_keys.connection_prefix,
       connection_sequence,
     )
@@ -225,7 +221,7 @@ fn setup() -> MockData {
     spend_connection_script_hash: "mock spend_connection_script_hash",
     connection_id,
     connection_token,
-    handler_token,
+    base_token,
     client_id,
     client_input,
     validity_range,
@@ -259,6 +255,12 @@ fn build_input(datum: Data, token: AuthToken) -> Input {
   input
 }
 
+fn host_state_update_connection_redeemer() -> Redeemer {
+  let redeemer: Redeemer =
+    host_state_redeemer.UpdateConnection { connection_siblings: [] }
+  redeemer
+}
+
 test conn_open_ack_succeed() {
   let mock = setup()
 
@@ -281,8 +283,7 @@ test conn_open_ack_succeed() {
 
   let conn_input = build_input(input_conn, mock.connection_token)
 
-  let inputs =
-    [conn_input, mock.host_state_input]
+  let inputs = [conn_input, mock.host_state_input]
 
   //========================arrange reference_inputs=======================
   let proof_height = Height { revision_number: 0, revision_height: 188485 }
@@ -299,8 +300,7 @@ test conn_open_ack_succeed() {
   let client_input =
     test_utils.update_client(proof_height, cons_state, mock.client_input)
 
-  let reference_inputs =
-    [client_input]
+  let reference_inputs = [client_input]
 
   //========================arrange outputs=======================
   let output_conn_datum =
@@ -318,41 +318,15 @@ test conn_open_ack_succeed() {
 
   let conn_output = build_output(output_conn_datum, mock.connection_token)
 
-  let outputs =
-    [conn_output, mock.host_state_output]
+  let outputs = [conn_output, mock.host_state_output]
 
   //========================arrange validity_range=======================
   let validity_range = mock.validity_range
 
   //========================arrange redeemers=======================
-  let counterparty_client_state =
-    MithrilClientState {
-      chain_id: "42",
-      latest_height: CardanoHeight { revision_number: 0, revision_height: 1 },
-      frozen_height: CardanoHeight { revision_number: 0, revision_height: 0 },
-      current_epoch: 1,
-      trusting_period: 1,
-      protocol_parameters: MithrilProtocolParameters {
-        k: 0,
-        m: 0,
-        phi_f: Fraction { numerator: 0, denominator: 1 },
-      },
-      upgrade_path: [],
-      host_state_nft_policy_id: mock.host_state_nft_policy_id,
-      host_state_nft_token_name: "ibc_host_state",
-    }
-
   let proof_try = MerkleProof { proofs: [] }
 
-  let proof_client = MerkleProof { proofs: [] }
-
-  let connection_redeemer: Redeemer =
-    ConnOpenAck {
-      counterparty_client_state,
-      proof_try,
-      proof_client,
-      proof_height,
-    }
+  let connection_redeemer: Redeemer = ConnOpenAck
 
   expect client_datum: ClientDatum =
     validator_utils.get_inline_datum(client_input.output)
@@ -368,14 +342,6 @@ test conn_open_ack_succeed() {
       connection.counterparty.prefix,
       merkle.new_merkle_path(
         [connection_keys.connection_path(connection.counterparty.connection_id)],
-      ),
-    )
-
-  let client_merkle_path =
-    merkle.apply_prefix(
-      connection.counterparty.prefix,
-      merkle.new_merkle_path(
-        [client_keys.full_client_state_path(connection.counterparty.client_id)],
       ),
     )
 
@@ -400,46 +366,28 @@ test conn_open_ack_succeed() {
       connection_end.convert_to_connection_end_proto(expected_connection),
     )
 
-  let counterparty_client_state_bz =
-    mithril_pb.marshal_for_any_client_state(
-      AnyMithrilClientState {
-        type_url: "/ibc.lightclients.mithril.v1.ClientState",
-        value: counterparty_client_state,
-      },
-    ).2nd
-
   expect Some(consensus_state) =
     pairs.get_first(client_datum_state.consensus_states, proof_height)
 
   let verify_proof_redeemer: Redeemer =
-    BatchVerifyMembership(
-      [
-        VerifyMembershipParams {
-          cs: client_datum_state.client_state,
-          cons_state: consensus_state,
-          height: proof_height,
-          delay_time_period: time_delay,
-          delay_block_period: block_delay,
-          proof: proof_try,
-          path: conn_merkle_path,
-          value: expected_connection_bz,
-        },
-        VerifyMembershipParams {
-          cs: client_datum_state.client_state,
-          cons_state: consensus_state,
-          height: proof_height,
-          delay_time_period: time_delay,
-          delay_block_period: block_delay,
-          proof: proof_client,
-          path: client_merkle_path,
-          value: counterparty_client_state_bz,
-        },
-      ],
-    )
+    VerifyMembership {
+      cs: client_datum_state.client_state,
+      cons_state: consensus_state,
+      height: proof_height,
+      delay_time_period: time_delay,
+      delay_block_period: block_delay,
+      proof: proof_try,
+      path: conn_merkle_path,
+      value: expected_connection_bz,
+    }
 
   let redeemers: Pairs<ScriptPurpose, Redeemer> =
     [
       Pair(Spend(conn_input.output_reference), connection_redeemer),
+      Pair(
+        Spend(mock.host_state_input.output_reference),
+        host_state_update_connection_redeemer(),
+      ),
       Pair(Mint(mock.verify_proof_policy_id), verify_proof_redeemer),
     ]
 
@@ -449,11 +397,11 @@ test conn_open_ack_succeed() {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
-      reference_inputs: reference_inputs,
-      outputs: outputs,
-      redeemers: redeemers,
-      validity_range: validity_range,
+      inputs,
+      reference_inputs,
+      outputs,
+      redeemers,
+      validity_range,
     }
 
   spending_connection.spend_connection.spend(
@@ -472,7 +420,6 @@ test conn_open_ack_fails_without_host_state_co_spend() fail {
 
   // This is the same scenario as `conn_open_ack_succeed`, but without the HostState input/output.
   // It must fail because `spend_connection` requires HostState to be co-spent.
-
   let input_conn =
     ConnectionEnd {
       client_id: mock.client_id,
@@ -491,8 +438,7 @@ test conn_open_ack_fails_without_host_state_co_spend() fail {
 
   let conn_input = build_input(input_conn, mock.connection_token)
 
-  let inputs =
-    [conn_input]
+  let inputs = [conn_input]
 
   let proof_height = Height { revision_number: 0, revision_height: 188485 }
 
@@ -508,8 +454,7 @@ test conn_open_ack_fails_without_host_state_co_spend() fail {
   let client_input =
     test_utils.update_client(proof_height, cons_state, mock.client_input)
 
-  let reference_inputs =
-    [client_input]
+  let reference_inputs = [client_input]
 
   let output_conn_datum =
     ConnectionDatum {
@@ -526,38 +471,12 @@ test conn_open_ack_fails_without_host_state_co_spend() fail {
 
   let conn_output = build_output(output_conn_datum, mock.connection_token)
 
-  let outputs =
-    [conn_output]
+  let outputs = [conn_output]
 
   let validity_range = mock.validity_range
 
-  let counterparty_client_state =
-    MithrilClientState {
-      chain_id: "42",
-      latest_height: CardanoHeight { revision_number: 0, revision_height: 1 },
-      frozen_height: CardanoHeight { revision_number: 0, revision_height: 0 },
-      current_epoch: 1,
-      trusting_period: 1,
-      protocol_parameters: MithrilProtocolParameters {
-        k: 0,
-        m: 0,
-        phi_f: Fraction { numerator: 0, denominator: 1 },
-      },
-      upgrade_path: [],
-      host_state_nft_policy_id: mock.host_state_nft_policy_id,
-      host_state_nft_token_name: "ibc_host_state",
-    }
-
   let proof_try = MerkleProof { proofs: [] }
-  let proof_client = MerkleProof { proofs: [] }
-
-  let connection_redeemer: Redeemer =
-    ConnOpenAck {
-      counterparty_client_state,
-      proof_try,
-      proof_client,
-      proof_height,
-    }
+  let connection_redeemer: Redeemer = ConnOpenAck
 
   expect client_datum: ClientDatum =
     validator_utils.get_inline_datum(client_input.output)
@@ -573,14 +492,6 @@ test conn_open_ack_fails_without_host_state_co_spend() fail {
       connection.counterparty.prefix,
       merkle.new_merkle_path(
         [connection_keys.connection_path(connection.counterparty.connection_id)],
-      ),
-    )
-
-  let client_merkle_path =
-    merkle.apply_prefix(
-      connection.counterparty.prefix,
-      merkle.new_merkle_path(
-        [client_keys.full_client_state_path(connection.counterparty.client_id)],
       ),
     )
 
@@ -605,42 +516,20 @@ test conn_open_ack_fails_without_host_state_co_spend() fail {
       connection_end.convert_to_connection_end_proto(expected_connection),
     )
 
-  let counterparty_client_state_bz =
-    mithril_pb.marshal_for_any_client_state(
-      AnyMithrilClientState {
-        type_url: "/ibc.lightclients.mithril.v1.ClientState",
-        value: counterparty_client_state,
-      },
-    ).2nd
-
   expect Some(consensus_state) =
     pairs.get_first(client_datum_state.consensus_states, proof_height)
 
   let verify_proof_redeemer: Redeemer =
-    BatchVerifyMembership(
-      [
-        VerifyMembershipParams {
-          cs: client_datum_state.client_state,
-          cons_state: consensus_state,
-          height: proof_height,
-          delay_time_period: time_delay,
-          delay_block_period: block_delay,
-          proof: proof_try,
-          path: conn_merkle_path,
-          value: expected_connection_bz,
-        },
-        VerifyMembershipParams {
-          cs: client_datum_state.client_state,
-          cons_state: consensus_state,
-          height: proof_height,
-          delay_time_period: time_delay,
-          delay_block_period: block_delay,
-          proof: proof_client,
-          path: client_merkle_path,
-          value: counterparty_client_state_bz,
-        },
-      ],
-    )
+    VerifyMembership {
+      cs: client_datum_state.client_state,
+      cons_state: consensus_state,
+      height: proof_height,
+      delay_time_period: time_delay,
+      delay_block_period: block_delay,
+      proof: proof_try,
+      path: conn_merkle_path,
+      value: expected_connection_bz,
+    }
 
   let redeemers: Pairs<ScriptPurpose, Redeemer> =
     [
@@ -653,11 +542,11 @@ test conn_open_ack_fails_without_host_state_co_spend() fail {
   let transaction =
     Transaction {
       ..transaction.placeholder,
-      inputs: inputs,
-      reference_inputs: reference_inputs,
-      outputs: outputs,
-      redeemers: redeemers,
-      validity_range: validity_range,
+      inputs,
+      reference_inputs,
+      outputs,
+      redeemers,
+      validity_range,
     }
 
   spending_connection.spend_connection.spend(

@@ -6,13 +6,12 @@ use std::time::Instant;
 use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::{
-    chains::{self, ChainStartRequest},
-    config, logger,
+    chains, config, logger,
     start::{
         build_aiken_validators_if_needed, build_hermes_if_needed, deploy_contracts,
         deploy_preprod_bridge, start_cosmos_entrypoint_chain,
-        start_cosmos_entrypoint_chain_services, start_gateway, start_hermes_daemon, start_mithril,
-        start_relayer, wait_for_cosmos_entrypoint_chain_ready,
+        start_cosmos_entrypoint_chain_services, start_dapp, start_gateway, start_hermes_daemon,
+        start_mithril, start_relayer, wait_for_cosmos_entrypoint_chain_ready,
     },
     utils::{prompt_runtime_deployer_sk, query_balance},
     StartTarget, StopTarget,
@@ -20,6 +19,22 @@ use crate::{
 
 const HERMES_BUILD_PROGRESS_LOG_INTERVAL_SECS: u64 = 10;
 const HERMES_BUILD_POLL_INTERVAL_SECS: u64 = 2;
+
+fn ensure_preprod_optional_relayer_routes(
+    project_root_path: &Path,
+    network: config::CoreCardanoNetwork,
+) -> Result<(), String> {
+    if network != config::CoreCardanoNetwork::Preprod {
+        return Ok(());
+    }
+
+    chains::injective::ensure_testnet_chain_in_hermes_config(project_root_path).map_err(|error| {
+        format!(
+            "ERROR: Failed to configure Injective testnet Hermes route: {}",
+            error
+        )
+    })
+}
 
 fn require_preprod_bridge_artifact(artifact_path: &Path, label: &str) -> Result<(), String> {
     if artifact_path.exists() {
@@ -77,115 +92,10 @@ pub async fn run_start(
     let start_network = start_all || target == Some(StartTarget::Network);
     let start_cosmos = start_all || target == Some(StartTarget::Entrypoint);
     let start_bridge = start_all || target == Some(StartTarget::Bridge);
-    let optional_chain_alias = resolve_optional_chain_alias(target.as_ref());
-
-    if let Some(optional_chain_id) = optional_chain_alias {
-        let chain_adapter = chains::get_chain_adapter(optional_chain_id).ok_or_else(|| {
-            format!(
-                "ERROR: Optional chain adapter '{}' is not registered",
-                optional_chain_id
-            )
-        })?;
-        let resolved_network = chain_adapter.resolve_network(network.as_deref())?;
-        let parsed_flags = chains::parse_chain_flags(chain_flags.as_slice())?;
-        chain_adapter.validate_flags(resolved_network.as_str(), &parsed_flags)?;
-        let request = ChainStartRequest {
-            network: resolved_network.as_str(),
-            flags: &parsed_flags,
-        };
-        let resolved_network_meta = chain_adapter
-            .supported_networks()
-            .iter()
-            .find(|entry| entry.name == resolved_network)
-            .copied()
-            .ok_or_else(|| {
-                format!(
-                    "ERROR: Chain '{}' resolved to unknown network '{}'",
-                    chain_adapter.id(),
-                    resolved_network
-                )
-            })?;
-
-        let optional_progress_bar = match logger::get_verbosity() {
-            logger::Verbosity::Verbose => None,
-            _ => Some(ProgressBar::new_spinner()),
-        };
-
-        if let Some(progress_bar) = &optional_progress_bar {
-            progress_bar.enable_steady_tick(Duration::from_millis(100));
-            progress_bar.set_style(
-                ProgressStyle::with_template(
-                    "{prefix:.bold} {spinner} [{elapsed_precise}] {wide_msg}",
-                )
-                .unwrap()
-                .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
-            );
-            let action = if resolved_network_meta.managed_by_caribic {
-                "Starting"
-            } else {
-                "Configuring"
-            };
-            progress_bar.set_prefix(
-                format!("{} {} ...", action, chain_adapter.display_name()).to_owned(),
-            );
-            let progress_message = if resolved_network_meta.managed_by_caribic {
-                format!("network={} (this can take a while)", resolved_network)
-            } else {
-                format!("network={} (configuring external access)", resolved_network)
-            };
-            progress_bar.set_message(progress_message);
-        } else {
-            let action = if resolved_network_meta.managed_by_caribic {
-                "Starting"
-            } else {
-                "Configuring"
-            };
-            logger::log(&format!(
-                "{} {} (network: {}) ...",
-                action,
-                chain_adapter.display_name(),
-                resolved_network
-            ));
-        }
-
-        let start_result = chain_adapter
-            .start(project_root_path, &request)
-            .await
-            .map_err(|error| {
-                format!(
-                    "ERROR: Failed to start {}: {}",
-                    chain_adapter.display_name(),
-                    error
-                )
-            });
-
-        if let Some(progress_bar) = &optional_progress_bar {
-            progress_bar.finish_and_clear();
-        }
-
-        start_result?;
-
-        let completion_action = if resolved_network_meta.managed_by_caribic {
-            "started"
-        } else {
-            "configured"
-        };
-        logger::log(&format!(
-            "PASS: {} {} successfully (network: {})",
-            chain_adapter.display_name(),
-            completion_action,
-            resolved_network,
-        ));
-        logger::log(&format!(
-            "\ncaribic start completed in {}",
-            format_elapsed_duration(start_elapsed_timer.elapsed())
-        ));
-        return Ok(());
-    }
 
     if !chain_flags.is_empty() {
         return Err(
-            "ERROR: --chain-flag requires an optional chain target. Use `caribic start <optional-chain-alias> --network <network>` or `caribic chain start ...`."
+            "ERROR: --chain-flag is only supported through the chain adapter registry. Use `caribic chain start --chain <id> --network <network>`."
                 .to_string(),
         );
     }
@@ -262,12 +172,25 @@ pub async fn run_start(
                 project_root_path.join("chains/cardano").as_path(),
                 clean,
                 core_cardano_network,
+                if with_mithril {
+                    "mithril"
+                } else {
+                    "stake-weighted-stability"
+                },
             )
             .map_err(|error| format!("ERROR: Failed to prepare gateway runtime: {}", error))?;
         }
         match start_gateway(project_root_path.join("cardano/gateway").as_path(), clean) {
             Ok(_) => logger::log("PASS: Gateway started (NestJS gRPC server on port 5001)"),
             Err(error) => return Err(format!("ERROR: Failed to start gateway: {}", error)),
+        };
+        return Ok(());
+    }
+
+    if target == Some(StartTarget::Dapp) {
+        match start_dapp(project_root_path, clean, core_cardano_network) {
+            Ok(_) => logger::log("PASS: IBC Swap dapp started"),
+            Err(error) => return Err(format!("ERROR: Failed to start IBC Swap dapp: {}", error)),
         };
         return Ok(());
     }
@@ -297,6 +220,8 @@ pub async fn run_start(
                 ))
             }
         };
+
+        ensure_preprod_optional_relayer_routes(project_root_path, core_cardano_network)?;
 
         match start_hermes_daemon() {
             Ok(_) => logger::log("PASS: Hermes daemon started successfully"),
@@ -467,6 +392,11 @@ pub async fn run_start(
                 project_root_path.join("chains/cardano").as_path(),
                 clean,
                 core_cardano_network,
+                if with_mithril {
+                    "mithril"
+                } else {
+                    "stake-weighted-stability"
+                },
             )
             .map_err(|error| {
                 format!(
@@ -659,6 +589,12 @@ pub async fn run_start(
             }
         }
 
+        if let Err(error) =
+            ensure_preprod_optional_relayer_routes(project_root_path, core_cardano_network)
+        {
+            return fail_and_stop_started_services(project_root_path, StopTarget::Bridge, &error);
+        }
+
         match start_hermes_daemon() {
             Ok(_) => {
                 logger::log("PASS: Hermes relayer started (check logs at ~/.hermes/hermes.log)")
@@ -741,7 +677,7 @@ pub async fn run_start(
         } else {
             logger::log("Next steps:");
             logger::log("   1. Check health: caribic health-check");
-            logger::log("   2. Review exported preprod artifacts in cardano/offchain/deployments");
+            logger::log("   2. Review exported preprod artifacts in manifests/preprod");
             logger::log("   3. Restart gateway/relayer independently with `caribic start gateway --network preprod` or `caribic start relayer --network preprod`");
         }
     }
@@ -751,17 +687,6 @@ pub async fn run_start(
         format_elapsed_duration(start_elapsed_timer.elapsed())
     ));
     Ok(())
-}
-
-/// Returns the optional-chain alias handled by `caribic start <target>` aliases.
-fn resolve_optional_chain_alias(target: Option<&StartTarget>) -> Option<&'static str> {
-    match target {
-        Some(StartTarget::Osmosis) => Some("osmosis"),
-        Some(StartTarget::Cheqd) => Some("cheqd"),
-        Some(StartTarget::Injective) => Some("injective"),
-        Some(StartTarget::Stellar) => Some("stellar"),
-        _ => None,
-    }
 }
 
 /// Logs a startup failure, stops the requested service group, and returns the same error.

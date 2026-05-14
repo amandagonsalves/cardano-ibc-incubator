@@ -26,13 +26,8 @@ function buildHandlerJsonDeployment() {
       policyId: 'host-policy',
       name: 'host-token',
     },
-    handlerAuthToken: {
-      policyId: 'handler-policy',
-      name: 'handler-token',
-    },
     validators: {
       hostStateStt: buildValidator('hostStateStt'),
-      spendHandler: buildValidator('spendHandler'),
       spendClient: buildValidator('spendClient'),
       spendConnection: buildValidator('spendConnection'),
       spendChannel: {
@@ -56,12 +51,13 @@ function buildHandlerJsonDeployment() {
       mintConnectionStt: buildValidator('mintConnectionStt'),
       mintChannelStt: buildValidator('mintChannelStt'),
       mintVoucher: buildValidator('mintVoucher'),
+      mintTransferEscrowShard: buildValidator('mintTransferEscrowShard'),
+      mintPort: buildValidator('mintPort'),
+      voucherMetadata: {
+        address: 'voucher-metadata-address',
+      },
     },
     modules: {
-      handler: {
-        identifier: 'handler-id',
-        address: 'handler-address',
-      },
       transfer: {
         identifier: 'transfer-id',
         address: 'transfer-address',
@@ -91,7 +87,7 @@ describe('bridge manifest normalization', () => {
     });
 
     expect(loaded.bridgeManifest).toMatchObject({
-      schema_version: 2,
+      schema_version: 3,
       deployment_id: 'cardano-devnet:host-policy.host-token',
       deployed_at: '2026-04-01T12:34:56.000Z',
       cardano: {
@@ -103,10 +99,12 @@ describe('bridge manifest normalization', () => {
         policy_id: 'host-policy',
         token_name: 'host-token',
       },
-      handler_auth_token: {
-        policy_id: 'handler-policy',
-        token_name: 'handler-token',
-      },
+    });
+    expect(loaded.deployment.validators.voucherMetadata).toEqual({
+      address: 'voucher-metadata-address',
+    });
+    expect(loaded.bridgeManifest.validators.voucher_metadata).toEqual({
+      address: 'voucher-metadata-address',
     });
 
     expect(loaded.deployment.validators.spendChannel.refValidator.chan_open_ack.scriptHash).toBe('open-ack-hash');
@@ -178,7 +176,40 @@ describe('bridge manifest normalization', () => {
         ...legacy.bridgeManifest,
         schema_version: 1,
       }),
-    ).toThrow('Invalid bridge config: "schema_version" must be 2');
+    ).toThrow('Invalid bridge config: "schema_version" must be 2 or 3');
+  });
+
+  it('accepts legacy voucher_metadata validator payloads and normalizes them to address-only', () => {
+    const current = normalizeHandlerJsonDeploymentConfig(buildHandlerJsonDeployment(), {
+      chain_id: 'cardano-devnet',
+      network_magic: 42,
+      network: 'Custom',
+    });
+
+    const legacyManifest = {
+      ...current.bridgeManifest,
+      schema_version: 2,
+      validators: {
+        ...current.bridgeManifest.validators,
+        voucher_metadata: {
+          script_hash: 'legacy-voucher-metadata-hash',
+          address: 'voucher-metadata-address',
+          ref_utxo: {
+            tx_hash: 'legacy-voucher-metadata-tx',
+            output_index: 12,
+          },
+        },
+      },
+    };
+
+    const loaded = normalizeBridgeManifestConfig(legacyManifest);
+
+    expect(loaded.deployment.validators.voucherMetadata).toEqual({
+      address: 'voucher-metadata-address',
+    });
+    expect(loaded.bridgeManifest.validators.voucher_metadata).toEqual({
+      address: 'voucher-metadata-address',
+    });
   });
 
   it('fails startup resolution if both manifest and handler paths are set', () => {

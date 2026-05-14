@@ -1,12 +1,10 @@
-use ibc/auth.{AuthToken}
 use ibc/client/ics_007_tendermint_client/height.{Height}
 use ibc/core/ics_004/types/packet.{Packet}
 use ibc/core/ics_023_vector_commitments/merkle.{MerkleProof}
 
 pub type MintChannelRedeemer {
-  ChanOpenInit { handler_token: AuthToken }
+  ChanOpenInit
   ChanOpenTry {
-    handler_token: AuthToken,
     counterparty_version: ByteArray,
     proof_init: MerkleProof,
     proof_height: Height,
@@ -40,5 +38,4 @@ pub type SpendChannelRedeemer {
   SendPacket { packet: Packet }
   ChanCloseInit
   ChanCloseConfirm { proof_init: MerkleProof, proof_height: Height }
-  RefreshUtxo
 }

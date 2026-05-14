@@ -1,14 +1,14 @@
 package app
 
 import (
+	asyncicqmodule "entrypoint/x/asyncicq/module"
 	ibcmithril "entrypoint/x/clients/mithril"
-	vesseloraclemodule "entrypoint/x/vesseloracle/module"
-	vesseloracletypes "entrypoint/x/vesseloracle/types"
+	ibcstability "entrypoint/x/clients/stability"
 
 	"cosmossdk.io/core/appmodule"
-	"github.com/cosmos/cosmos-sdk/runtime"
 	storetypes "cosmossdk.io/store/types"
 	cdctypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/runtime"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	govv1beta1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
@@ -37,6 +37,11 @@ import (
 	solomachine "github.com/cosmos/ibc-go/v10/modules/light-clients/06-solomachine"
 	ibctm "github.com/cosmos/ibc-go/v10/modules/light-clients/07-tendermint"
 	// this line is used by starport scaffolding # ibc/app/import
+)
+
+const (
+	vesseloracleConsolidatedDataReportQueryPath       = "/vesseloracle.vesseloracle.Query/ConsolidatedDataReport"
+	vesseloracleLatestConsolidatedDataReportQueryPath = "/vesseloracle.vesseloracle.Query/LatestConsolidatedDataReport"
 )
 
 // registerIBCModules register IBC keepers and non dependency inject modules.
@@ -154,11 +159,16 @@ func (app *App) registerIBCModules() {
 	icaHostIBCModule := icahost.NewIBCModule(app.ICAHostKeeper)
 
 	// Create static IBC router, add transfer route, then set and seal it
+	// Keep the async-ICQ host generic by declaring its query-policy here in app
+	// wiring rather than inside the host module package.
 	ibcRouter := porttypes.NewRouter().
 		AddRoute(ibctransfertypes.ModuleName, transferStack).
 		AddRoute(icacontrollertypes.SubModuleName, icaControllerIBCModule).
-		AddRoute(icahosttypes.SubModuleName, icaHostIBCModule)
-	ibcRouter.AddRoute(vesseloracletypes.ModuleName, vesseloraclemodule.NewIBCModule(app.VesseloracleKeeper))
+		AddRoute(icahosttypes.SubModuleName, icaHostIBCModule).
+		AddRoute(asyncicqmodule.PortID, asyncicqmodule.NewIBCModule(app.GRPCQueryRouter(), []string{
+			vesseloracleConsolidatedDataReportQueryPath,
+			vesseloracleLatestConsolidatedDataReportQueryPath,
+		}))
 
 	// this line is used by starport scaffolding # ibc/app/module
 
@@ -169,10 +179,12 @@ func (app *App) registerIBCModules() {
 	tmLightClientModule := ibctm.NewLightClientModule(app.appCodec, storeProvider)
 	smLightClientModule := solomachine.NewLightClientModule(app.appCodec, storeProvider)
 	mithrilLightClientModule := ibcmithril.NewLightClientModule(app.appCodec, storeProvider)
+	stabilityLightClientModule := ibcstability.NewLightClientModule(app.appCodec, storeProvider)
 
 	clientKeeper.AddRoute(ibctm.ModuleName, &tmLightClientModule)
 	clientKeeper.AddRoute(solomachine.ModuleName, &smLightClientModule)
 	clientKeeper.AddRoute(ibcmithril.ModuleName, &mithrilLightClientModule)
+	clientKeeper.AddRoute(ibcstability.ModuleName, &stabilityLightClientModule)
 
 	// register IBC modules
 	if err := app.RegisterModules(
@@ -182,6 +194,7 @@ func (app *App) registerIBCModules() {
 		icamodule.NewAppModule(&app.ICAControllerKeeper, &app.ICAHostKeeper),
 		ibctm.NewAppModule(tmLightClientModule),
 		ibcmithril.NewAppModule(mithrilLightClientModule),
+		ibcstability.NewAppModule(stabilityLightClientModule),
 		solomachine.NewAppModule(smLightClientModule),
 	); err != nil {
 		panic(err)
@@ -199,6 +212,7 @@ func RegisterIBC(registry cdctypes.InterfaceRegistry) map[string]appmodule.AppMo
 		icatypes.ModuleName:         icamodule.AppModule{},
 		ibctm.ModuleName:            ibctm.NewAppModule(ibctm.LightClientModule{}),
 		ibcmithril.ModuleName:       ibcmithril.NewAppModule(ibcmithril.LightClientModule{}),
+		ibcstability.ModuleName:     ibcstability.NewAppModule(ibcstability.LightClientModule{}),
 		solomachine.ModuleName:      solomachine.NewAppModule(solomachine.LightClientModule{}),
 	}
 

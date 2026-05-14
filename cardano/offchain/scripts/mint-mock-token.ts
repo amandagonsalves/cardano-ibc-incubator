@@ -2,12 +2,10 @@ import {
   Data,
   fromText,
   Kupmios,
-  Lucid,
   LucidEvolution,
-  Network,
-  SLOT_CONFIG_NETWORK,
 } from "@lucid-evolution/lucid";
-import { readValidator, querySystemStart } from "../src/utils.ts";
+import { readValidator } from "../src/utils.ts";
+import { buildLucidWithCompatibleProtocolParameters } from "../src/protocol_parameters.ts";
 
 type ScriptArgs = {
   tokenName: string;
@@ -51,6 +49,7 @@ function parseArgs(argv: string[]): ScriptArgs {
       case "--help":
       case "-h":
         usage();
+        break;
       default:
         throw new Error(`Unknown argument: ${arg}`);
     }
@@ -67,19 +66,6 @@ function parseArgs(argv: string[]): ScriptArgs {
   return { tokenName, amount, receiver };
 }
 
-function parseNetwork(networkMagic: string): Network {
-  switch (networkMagic) {
-    case "1":
-      return "Preprod";
-    case "2":
-      return "Preview";
-    case "764824073":
-      return "Mainnet";
-    default:
-      return "Custom";
-  }
-}
-
 async function buildLucid(): Promise<LucidEvolution> {
   const deployerSk = Deno.env.get("DEPLOYER_SK");
   const kupoUrl = Deno.env.get("KUPO_URL");
@@ -91,15 +77,10 @@ async function buildLucid(): Promise<LucidEvolution> {
   }
 
   const provider = new Kupmios(kupoUrl, ogmiosUrl);
-  const chainZeroTime = await querySystemStart(ogmiosUrl);
-  SLOT_CONFIG_NETWORK.Preview.zeroTime = chainZeroTime;
-  const protocolParameters = await provider.getProtocolParameters();
-  const lucid = await Lucid(
+  const lucid = await buildLucidWithCompatibleProtocolParameters(
     provider,
-    parseNetwork(cardanoNetworkMagic),
-    {
-      presetProtocolParameters: protocolParameters,
-    } as any,
+    ogmiosUrl,
+    cardanoNetworkMagic,
   );
 
   lucid.selectWallet.fromPrivateKey(deployerSk);
@@ -168,7 +149,9 @@ async function main() {
 
 main().catch((error) => {
   console.error(
-    `mint-mock-token failed: ${error instanceof Error ? error.message : String(error)}`,
+    `mint-mock-token failed: ${
+      error instanceof Error ? error.message : String(error)
+    }`,
   );
   Deno.exit(1);
 });

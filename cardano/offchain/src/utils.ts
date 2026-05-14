@@ -1,6 +1,12 @@
 import blueprint from "../../onchain/plutus.json" with { type: "json" };
 import { crypto } from "@std/crypto";
 import {
+  resolveManagedKupoHeader,
+  resolveManagedKupoRequestVariants,
+  resolveManagedKupoUrl,
+} from "./http_auth.ts";
+import { queryOgmiosJsonRpc } from "./external_cardano.ts";
+import {
   Address,
   applyParamsToScript,
   Data,
@@ -17,6 +23,28 @@ import {
   validatorToScriptHash,
 } from "@lucid-evolution/lucid";
 import { AuthToken, OutputReference } from "../types/index.ts";
+
+const RETRYABLE_OGMIOS_TRANSPORT_MARKERS = [
+  "WebSocket closed before evaluateTransaction returned a response",
+  "Timed out waiting for evaluateTransaction response",
+  "WebSocket closed before submitTransaction returned a response",
+  "Timed out waiting for submitTransaction response",
+  "Unexpected server response: 401",
+];
+
+const DEFAULT_MAX_TX_SIZE = 16_384;
+const TX_SIZE_WARNING_HEADROOM_BYTES = 750;
+const WALLET_UTXO_OGMIOS_BATCH_SIZE = 50;
+
+export const isRetryableOgmiosTransportError = (error: unknown): boolean => {
+  const errorText = error instanceof Error
+    ? `${error.message}\n${error.stack ?? ""}`
+    : String(error);
+
+  return RETRYABLE_OGMIOS_TRANSPORT_MARKERS.some((marker) =>
+    errorText.includes(marker)
+  );
+};
 
 export const readValidator = <T extends unknown[] = Data[]>(
   title: string,
@@ -52,37 +80,241 @@ export const readValidator = <T extends unknown[] = Data[]>(
 };
 
 export const submitTx = async (
-  tx: TxBuilder,
+  tx: TxBuilder | (() => TxBuilder | Promise<TxBuilder>),
   lucid: LucidEvolution,
   txName: string,
   logSize = true,
   localUPLCEval = false, // Default to false to use Ogmios for script evaluation
 ) => {
+  const ADOPTION_ATTEMPTS = 6;
+  const ADOPTION_TIMEOUT_MS = 30000;
+  const ADOPTION_RETRY_DELAY_MS = 5000;
+  const COMPLETE_ATTEMPTS = 5;
+  const sleep = (ms: number) =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+  const awaitTxWithTimeout = async (hash: string) => {
+    await Promise.race([
+      awaitWalletTx(lucid, hash, 1000, ADOPTION_TIMEOUT_MS),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () =>
+            reject(
+              new Error(
+                `Timed out waiting ${ADOPTION_TIMEOUT_MS}ms for tx adoption`,
+              ),
+            ),
+          ADOPTION_TIMEOUT_MS,
+        )
+      ),
+    ]);
+  };
+
   console.log("Submitting tx [", txName, "]");
-  const completedTx = await tx.complete({ localUPLCEval });
+  const buildTx = async () => typeof tx === "function" ? await tx() : tx;
+  let completedTx;
+  let lastCompletionError: unknown = null;
+  for (let attempt = 1; attempt <= COMPLETE_ATTEMPTS; attempt += 1) {
+    try {
+      // Rebuild the transaction from scratch on each completion retry. Lucid's
+      // TxBuilder is stateful, so reusing the same builder after a transient
+      // Ogmios failure can duplicate mint entries or other accumulated effects.
+      completedTx = await (await buildTx()).complete({ localUPLCEval });
+      lastCompletionError = null;
+      break;
+    } catch (error) {
+      lastCompletionError = error;
+      if (
+        !isRetryableOgmiosTransportError(error) || attempt === COMPLETE_ATTEMPTS
+      ) {
+        throw error;
+      }
+      console.warn(
+        `Submitting tx [ ${txName} ]: complete retry ${attempt}/${COMPLETE_ATTEMPTS} after transient Ogmios transport error:`,
+        error,
+      );
+      await sleep(2000);
+    }
+  }
+  if (!completedTx) {
+    throw lastCompletionError ?? new Error(`Failed to complete tx '${txName}'`);
+  }
+  const maxTxSize = lucid.config().protocolParameters?.maxTxSize ??
+    DEFAULT_MAX_TX_SIZE;
+  const completedTxBytes = completedTx.toCBOR().length / 2;
+  if (completedTxBytes > maxTxSize) {
+    throw new Error(
+      `Transaction '${txName}' is ${completedTxBytes} bytes before signing, above maxTxSize ${maxTxSize}. Refusing to submit an oversized transaction.`,
+    );
+  }
+  if (completedTxBytes > maxTxSize - TX_SIZE_WARNING_HEADROOM_BYTES) {
+    console.warn(
+      `Submitting tx [ ${txName} ]: unsigned size ${completedTxBytes} bytes is within ${TX_SIZE_WARNING_HEADROOM_BYTES} bytes of maxTxSize ${maxTxSize}`,
+    );
+  }
   if (logSize) {
     console.log(
       "Submitting tx [",
       txName,
       "]: size in bytes",
-      completedTx.toCBOR().length / 2,
+      completedTxBytes,
     );
   }
   console.log("Submitting tx [", txName, "]: signing ...");
   const signedTx = await completedTx.sign.withWallet().complete();
+  const signedTxBytes = signedTx.toCBOR().length / 2;
+  if (signedTxBytes > maxTxSize) {
+    throw new Error(
+      `Transaction '${txName}' is ${signedTxBytes} bytes after signing, above maxTxSize ${maxTxSize}. Refusing to submit an oversized transaction.`,
+    );
+  }
+  if (signedTxBytes > maxTxSize - TX_SIZE_WARNING_HEADROOM_BYTES) {
+    console.warn(
+      `Submitting tx [ ${txName} ]: signed size ${signedTxBytes} bytes is within ${TX_SIZE_WARNING_HEADROOM_BYTES} bytes of maxTxSize ${maxTxSize}`,
+    );
+  }
   console.log(
     "Submitting tx [",
     txName,
     "]: signed tx size in bytes",
-    signedTx.toCBOR().length / 2,
+    signedTxBytes,
   );
-  console.log("Submitting tx [", txName, "]: submitting ...");
-  const txHash = await signedTx.submit();
+  // Treat the signed body hash as the canonical tx identity up front. A submit
+  // attempt can succeed on-chain even when Ogmios drops the response before
+  // returning the transaction id, so retries must not depend on recovering the
+  // hash from the transport response.
+  const txHash = signedTx.toHash();
   console.log("Submitting tx [", txName, "]: tx hash is", txHash);
-  console.log("Submitting tx [", txName, "]: waiting for adoption ...");
-  await lucid.awaitTx(txHash, 1000);
-  console.log("Submitting tx [", txName, "]: done");
-  return txHash;
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= ADOPTION_ATTEMPTS; attempt++) {
+    try {
+      console.log(
+        "Submitting tx [",
+        txName,
+        `]: submitting (attempt ${attempt}/${ADOPTION_ATTEMPTS}) ...`,
+      );
+      const submittedHash = await signedTx.submit();
+      if (submittedHash !== txHash) {
+        throw new Error(
+          `Provider returned tx hash ${submittedHash}, but signed body hash is ${txHash}`,
+        );
+      }
+    } catch (error) {
+      lastError = error;
+      console.warn(
+        `Submitting tx [ ${txName} ]: submit attempt ${attempt}/${ADOPTION_ATTEMPTS} returned:`,
+        error,
+      );
+    }
+
+    try {
+      console.log(
+        "Submitting tx [",
+        txName,
+        `]: waiting for adoption (attempt ${attempt}/${ADOPTION_ATTEMPTS}) ...`,
+      );
+      await awaitTxWithTimeout(txHash);
+      console.log("Submitting tx [", txName, "]: done");
+      return txHash;
+    } catch (error) {
+      lastError = error;
+      console.warn(
+        `Submitting tx [ ${txName} ]: tx ${txHash} was not visible on the canonical chain after attempt ${attempt}/${ADOPTION_ATTEMPTS}:`,
+        error,
+      );
+      if (attempt === ADOPTION_ATTEMPTS) {
+        throw error;
+      }
+      await sleep(ADOPTION_RETRY_DELAY_MS);
+    }
+  }
+
+  throw lastError ?? new Error(`Failed to confirm tx '${txName}'`);
+};
+
+export const awaitWalletTx = async (
+  lucid: LucidEvolution,
+  txHash: string,
+  checkInterval = 1000,
+  timeoutMs = 30000,
+): Promise<void> => {
+  const timeoutAt = Date.now() + timeoutMs;
+  const kupoUrl = Deno.env.get("KUPO_URL")?.trim();
+  const kupoApiKey = Deno.env.get("KUPO_API_KEY")?.trim();
+  const managedKupoUrl = kupoUrl
+    ? resolveManagedKupoUrl(kupoUrl, kupoApiKey)
+    : undefined;
+  const kupoMatchHeader = kupoUrl
+    ? resolveManagedKupoHeader(kupoUrl, kupoApiKey)
+    : undefined;
+  const walletAddress = await lucid.wallet().address();
+  const kupoRequestVariants = kupoUrl
+    ? resolveManagedKupoRequestVariants(kupoUrl, kupoApiKey)
+    : [];
+
+  while (Date.now() < timeoutAt) {
+    if (managedKupoUrl) {
+      const requestVariants = kupoRequestVariants.length > 0
+        ? kupoRequestVariants
+        : [{
+          baseUrl: managedKupoUrl,
+          headers: kupoMatchHeader,
+        }];
+
+      for (const variant of requestVariants) {
+        const args = [
+          "-sS",
+          "--connect-timeout",
+          "10",
+          "--max-time",
+          "20",
+        ];
+        for (const [name, value] of Object.entries(variant.headers ?? {})) {
+          args.push("-H", `${name}: ${value}`);
+        }
+        const matchPredicates = [`*@${txHash}`, walletAddress];
+        for (const predicate of matchPredicates) {
+          const output = await new Deno.Command("/usr/bin/curl", {
+            args: [
+              ...args,
+              `${variant.baseUrl}/matches/${predicate}?unspent`,
+              "-w",
+              "\n%{http_code}",
+            ],
+            stdout: "piped",
+            stderr: "piped",
+          }).output();
+
+          if (output.success) {
+            const stdout = new TextDecoder().decode(output.stdout);
+            const separator = stdout.lastIndexOf("\n");
+            const body = separator >= 0 ? stdout.slice(0, separator) : stdout;
+            const statusText = separator >= 0
+              ? stdout.slice(separator + 1).trim()
+              : "500";
+            const status = Number.parseInt(statusText, 10) || 500;
+            if (status >= 200 && status < 300) {
+              const matches = JSON.parse(body) as Array<{
+                transaction_id?: string;
+              }>;
+              if (matches.some((match) => match.transaction_id === txHash)) {
+                return;
+              }
+            }
+          }
+        }
+      }
+    } else {
+      const walletUtxos = await lucid.wallet().getUtxos();
+      if (walletUtxos.some((utxo) => utxo.txHash === txHash)) {
+        return;
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, checkInterval));
+  }
+
+  throw new Error(`Timed out waiting for wallet visibility of tx ${txHash}`);
 };
 
 export const formatTimestamp = (timestampInMilliseconds: number): string => {
@@ -132,68 +364,99 @@ export const hashSha3_256 = async (data: string) => {
   return toHex(new Uint8Array(digest));
 };
 
-const ogmiosWsp = async (
-  ogmiosUrl: string,
-  methodname: string,
-  args: unknown,
-) => {
-  const client = new WebSocket(ogmiosUrl);
-  await new Promise((res) => {
-    client.addEventListener("open", () => res(1), {
-      once: true,
-    });
-  });
-  client.send(
-    JSON.stringify({
-      jsonrpc: "2.0",
-      method: methodname,
-      params: args,
-    }),
-  );
-  return client;
+const resolveOgmiosWsUrl = (ogmiosUrl: string) => {
+  const websocketUrl = (() => {
+    const explicitWsUrl = Deno.env.get("OGMIOS_WS_URL")?.trim();
+    if (explicitWsUrl) {
+      return explicitWsUrl;
+    }
+
+    try {
+      const parsedUrl = new URL(ogmiosUrl);
+      if (parsedUrl.protocol === "https:") {
+        parsedUrl.protocol = "wss:";
+        return parsedUrl.toString();
+      }
+      if (parsedUrl.protocol === "http:") {
+        parsedUrl.protocol = "ws:";
+        return parsedUrl.toString();
+      }
+    } catch {
+      // Fall back to the provided URL if it is already a websocket URL or
+      // cannot be parsed into an HTTP/HTTPS transport URL.
+    }
+
+    return ogmiosUrl;
+  })();
+
+  return websocketUrl;
 };
 
 export const querySystemStart = async (ogmiosUrl: string) => {
-  const client = await ogmiosWsp(ogmiosUrl, "queryNetwork/startTime", {});
+  let lastError: unknown = null;
 
-  client.addEventListener(
-    "open",
-    () => console.log("WebSocket connection opened."),
-  );
-  client.addEventListener("close", (event) => {
-    if (!event.wasClean) {
-      console.log("WebSocket connection closed.", {
-        code: event.code,
-        reason: event.reason,
-        wasClean: event.wasClean,
-      });
-    }
-  });
-  client.addEventListener(
-    "error",
-    (err) => console.log("WebSocket error:", err),
-  );
-
-  const systemStart = await new Promise<string>((res, rej) => {
-    client.addEventListener(
-      "message",
-      (msg: MessageEvent<string>) => {
-        try {
-          const { result } = JSON.parse(msg.data);
-          res(result);
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    const client = new WebSocket(resolveOgmiosWsUrl(ogmiosUrl));
+    try {
+      const systemStart = await new Promise<string>((res, rej) => {
+        let settled = false;
+        const timeoutHandle = setTimeout(() => {
+          settled = true;
           client.close();
-        } catch (e) {
-          rej(e);
-        }
-      },
-      {
-        once: true,
-      },
-    );
-  });
-  const parsedSystemTime = Date.parse(systemStart);
+          rej(
+            new Error("Timed out waiting for queryNetwork/startTime response"),
+          );
+        }, 10000);
 
-  return parsedSystemTime;
+        client.onopen = () => {
+          client.send(
+            JSON.stringify({
+              jsonrpc: "2.0",
+              method: "queryNetwork/startTime",
+              params: {},
+              id: null,
+            }),
+          );
+        };
+
+        client.onmessage = (msg: MessageEvent<string>) => {
+          settled = true;
+          clearTimeout(timeoutHandle);
+          try {
+            const { result } = JSON.parse(msg.data);
+            res(result);
+          } catch (error) {
+            rej(error);
+          } finally {
+            client.close();
+          }
+        };
+
+        client.onclose = (event) => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          clearTimeout(timeoutHandle);
+          rej(
+            new Error(
+              `WebSocket closed before queryNetwork/startTime returned a response (code=${event.code}, reason=${event.reason})`,
+            ),
+          );
+        };
+      });
+      const parsedSystemTime = Date.parse(systemStart);
+      return parsedSystemTime;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 5) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+  }
+
+  throw lastError ?? new Error("Failed to query network start time");
 };
 
 export const generateIdentifierTokenName = (outRef: OutputReference) => {
@@ -206,7 +469,7 @@ export const generateIdentifierTokenName = (outRef: OutputReference) => {
 export const getNonceOutRef = async (
   lucid: LucidEvolution,
 ): Promise<[UTxO, OutputReference]> => {
-  const signerUtxos = await lucid.wallet().getUtxos();
+  const signerUtxos = await getLiveWalletUtxos(lucid);
   if (signerUtxos.length < 1) throw new Error("No UTXO founded");
   const NONCE_UTXO = signerUtxos[0];
   const outputReference: OutputReference = {
@@ -217,20 +480,139 @@ export const getNonceOutRef = async (
   return [NONCE_UTXO, outputReference];
 };
 
-type Module = "handler" | "transfer";
+export const filterLiveUtxos = async (
+  lucid: LucidEvolution,
+  utxos: UTxO[],
+): Promise<UTxO[]> => {
+  if (utxos.length === 0) {
+    return [];
+  }
+
+  // Requery the wallet view and intersect locally instead of relying on
+  // utxosByOutRef(), because some managed Kupo providers are inconsistent on
+  // wildcard out-ref lookups even when plain wallet-address matches are healthy.
+  const currentWalletUtxos = await lucid.wallet().getUtxos();
+  if (currentWalletUtxos.length === 0) {
+    return [];
+  }
+
+  const liveRefs = new Set(
+    currentWalletUtxos.map((utxo) => `${utxo.txHash}#${utxo.outputIndex}`),
+  );
+  const kupoVisibleUtxos = utxos.filter((utxo) =>
+    liveRefs.has(`${utxo.txHash}#${utxo.outputIndex}`)
+  );
+  return await filterNodeVisibleWalletUtxos(kupoVisibleUtxos);
+};
+
+const utxoRefKey = (utxo: UTxO): string => `${utxo.txHash}#${utxo.outputIndex}`;
+
+const filterNodeVisibleWalletUtxos = async (utxos: UTxO[]): Promise<UTxO[]> => {
+  const ogmiosUrl = Deno.env.get("OGMIOS_URL")?.trim();
+  if (!ogmiosUrl || utxos.length === 0) {
+    return utxos;
+  }
+
+  const visibleRefs = new Set<string>();
+  for (
+    let index = 0;
+    index < utxos.length;
+    index += WALLET_UTXO_OGMIOS_BATCH_SIZE
+  ) {
+    const batch = utxos.slice(index, index + WALLET_UTXO_OGMIOS_BATCH_SIZE);
+    const { result } = await queryOgmiosJsonRpc(
+      ogmiosUrl,
+      "queryLedgerState/utxo",
+      {
+        outputReferences: batch.map((utxo) => ({
+          transaction: { id: utxo.txHash },
+          index: utxo.outputIndex,
+        })),
+      },
+      20_000,
+      3,
+    );
+
+    for (const output of result ?? []) {
+      const txId = output?.transaction?.id;
+      const outputIndex = output?.index;
+      if (txId !== undefined && outputIndex !== undefined) {
+        visibleRefs.add(`${txId}#${outputIndex}`);
+      }
+    }
+  }
+
+  return utxos.filter((utxo) => visibleRefs.has(utxoRefKey(utxo)));
+};
+
+export const getLiveWalletUtxos = async (
+  lucid: LucidEvolution,
+  minCount = 1,
+  maxAttempts = 12,
+  retryDelayMs = 2000,
+): Promise<UTxO[]> => {
+  let lastLiveUtxos: UTxO[] = [];
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      const walletUtxos = await lucid.wallet().getUtxos();
+      const liveUtxos = await filterLiveUtxos(lucid, walletUtxos);
+      if (liveUtxos.length >= minCount) {
+        return liveUtxos;
+      }
+      lastLiveUtxos = liveUtxos;
+      lastError = null;
+    } catch (error) {
+      // Managed preprod providers can intermittently return transient auth or
+      // edge failures even when the same wallet query succeeds moments later.
+      // Treat those as retryable during bridge bootstrap instead of failing fast.
+      lastError = error;
+    }
+
+    if (attempt < maxAttempts) {
+      await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+    }
+  }
+
+  const walletAddress = await lucid.wallet().address();
+  if (lastError) {
+    throw new Error(
+      `Wallet ${walletAddress} UTxO query did not stabilize after ${maxAttempts} attempts: ${
+        String(lastError)
+      }`,
+    );
+  }
+  throw new Error(
+    `Wallet ${walletAddress} only has ${lastLiveUtxos.length} live UTxO(s); need ${minCount}.`,
+  );
+};
+
+type Validator =
+  | "spendClient"
+  | "spendConnection"
+  | "spendChannel"
+  | "spendMockModule"
+  | "spendTraceRegistry"
+  | "spendTransferModule"
+  | "mintIdentifier"
+  | "mintTransferEscrowShard"
+  | "mintVoucher"
+  | "mintPort"
+  | "voucherMetadata"
+  | "verifyProof"
+  | "hostStateStt"
+  | "mintClientStt"
+  | "mintConnectionStt"
+  | "mintChannelStt";
+
+type Module = "transfer" | "mock" | "icq";
 
 type Tokens = "mock";
 
 export type DeploymentTemplate = {
   deployedAt: string;
   validators: {
-    spendHandler: {
-      title: string;
-      script: string;
-      scriptHash: string;
-      address: string;
-      refUtxo: UTxO;
-    };
     spendClient: {
       title: string;
       script: string;
@@ -263,6 +645,13 @@ export type DeploymentTemplate = {
       address: string;
       refUtxo: UTxO;
     };
+    spendMockModule?: {
+      title: string;
+      script: string;
+      scriptHash: string;
+      address: string;
+      refUtxo: UTxO;
+    };
     mintIdentifier: {
       title: string;
       script: string;
@@ -283,6 +672,26 @@ export type DeploymentTemplate = {
       scriptHash: string;
       address: string;
       refUtxo: UTxO;
+    };
+    mintTransferEscrowShard: {
+      title: string;
+      script: string;
+      scriptHash: string;
+      address: string;
+      refUtxo: UTxO;
+    };
+    mintPort: {
+      title: string;
+      script: string;
+      scriptHash: string;
+      address: string;
+      refUtxo: UTxO;
+    };
+    // Runtime only needs the voucher-metadata script address in order to create
+    // the immutable CIP-68 output. The script remains a deployment-time concern
+    // for deriving the address and parameterizing mint_voucher.
+    voucherMetadata?: {
+      address: string;
     };
     mintTraceRegistryBenchmarkVoucher?: {
       title: string;
@@ -326,10 +735,6 @@ export type DeploymentTemplate = {
       address: string;
       refUtxo: UTxO;
     };
-  };
-  handlerAuthToken: {
-    policyId: string;
-    name: string;
   };
   hostStateNFT?: {
     policyId: string;

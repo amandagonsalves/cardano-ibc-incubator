@@ -44,11 +44,12 @@ export type TxCompleteRetryPolicy = {
 export type TxOperationPlan<TExtraResponseFields = Record<string, never>> = {
   operationName: string;
   unsignedTx: TxBuilder;
+  rebuildUnsignedTx?: () => Promise<TxBuilder> | TxBuilder;
   validity: TxValidityPolicy;
   wallet: TxWalletInstruction;
   completeOptions?: TxCompleteOptions;
   completeRetry?: TxCompleteRetryPolicy;
-  pendingTreeUpdate?: PendingTreeUpdate;
+  pendingTreeUpdate?: PendingTreeUpdate | (() => PendingTreeUpdate | undefined);
   syntheticEvents?: GatewayEvent[];
   extraResponseFields?: TExtraResponseFields;
 };
@@ -75,17 +76,20 @@ export class TxOperationRunnerService {
   async run<TExtraResponseFields = Record<string, never>>(
     plan: TxOperationPlan<TExtraResponseFields>,
   ): Promise<TxOperationRunnerResult<TExtraResponseFields>> {
-    const txWithValidity = plan.validity.apply(plan.unsignedTx);
     const completedUnsignedTx = await this.withCompletionLock(() =>
-      this.completeWithExplicitWalletSelection(txWithValidity, plan),
+      this.completeWithExplicitWalletSelection(plan),
     );
 
     const unsignedTxCbor = completedUnsignedTx.toCBOR();
     const unsignedTxHash = completedUnsignedTx.toHash();
     const unsignedTxBytes = new Uint8Array(Buffer.from(unsignedTxCbor, 'utf-8'));
 
-    if (plan.pendingTreeUpdate) {
-      this.ibcTreePendingUpdatesService.register(unsignedTxHash, plan.pendingTreeUpdate);
+    const pendingTreeUpdate =
+      typeof plan.pendingTreeUpdate === 'function'
+        ? plan.pendingTreeUpdate()
+        : plan.pendingTreeUpdate;
+    if (pendingTreeUpdate) {
+      this.ibcTreePendingUpdatesService.register(unsignedTxHash, pendingTreeUpdate);
     }
 
     if (plan.syntheticEvents && plan.syntheticEvents.length > 0) {
@@ -117,13 +121,17 @@ export class TxOperationRunnerService {
   }
 
   private async completeWithExplicitWalletSelection<TExtraResponseFields>(
-    txWithValidity: TxBuilder,
     plan: TxOperationPlan<TExtraResponseFields>,
   ): Promise<CompletedUnsignedTx> {
     const maxAttempts = Math.max(1, plan.completeRetry?.maxAttempts ?? 1);
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      const txBuilder =
+        attempt === 1 || !plan.rebuildUnsignedTx
+          ? plan.unsignedTx
+          : await plan.rebuildUnsignedTx();
+      const txWithValidity = plan.validity.apply(txBuilder);
       const walletScopeId = this.lucidService.beginWalletSelectionScope();
       try {
         await this.applyWalletInstruction(plan.wallet);
@@ -143,6 +151,12 @@ export class TxOperationRunnerService {
           retryPolicy.isRetryable(error);
 
         if (!shouldRetry) {
+          throw error;
+        }
+        if (!plan.rebuildUnsignedTx) {
+          console.warn(
+            `[txRunner] ${plan.operationName} retryable failure but no rebuildUnsignedTx callback was provided; not retrying mutable tx builder`,
+          );
           throw error;
         }
 

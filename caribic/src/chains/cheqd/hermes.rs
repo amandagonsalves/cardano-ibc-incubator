@@ -1,13 +1,13 @@
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 
 use super::config;
 use crate::chains::hermes_support;
 use crate::chains::hermes_support::{
-    HermesAddressType, HermesCosmosChainProfile, HermesGasPrice, HermesTrustThreshold,
+    HermesAddressType, HermesCosmosChainProfile, HermesEventSource, HermesGasPrice,
+    HermesTrustThreshold,
 };
-use crate::utils::execute_script;
+use crate::process::hermes::HermesCli;
 
 /// Best-effort sync of the local cheqd chain block and deterministic relayer key into Hermes.
 ///
@@ -47,7 +47,10 @@ fn local_chain_profile() -> HermesCosmosChainProfile {
         id: config::LOCAL_CHAIN_ID.to_string(),
         rpc_addr: format!("http://127.0.0.1:{}", config::LOCAL_RPC_PORT),
         grpc_addr: format!("http://127.0.0.1:{}", config::LOCAL_GRPC_PORT),
-        event_source_url: format!("ws://127.0.0.1:{}/websocket", config::LOCAL_RPC_PORT),
+        event_source: HermesEventSource::Push {
+            url: format!("ws://127.0.0.1:{}/websocket", config::LOCAL_RPC_PORT),
+            batch_delay: "200ms",
+        },
         rpc_timeout: "10s",
         trusted_node: Some(true),
         account_prefix: "cheqd",
@@ -66,7 +69,7 @@ fn local_chain_profile() -> HermesCosmosChainProfile {
         clock_drift: "20s",
         max_block_time: "10s",
         trusting_period: "10days",
-        memo_prefix: Some("Caribic"),
+        memo_prefix: Some("Cardano IBC Relayer"),
         trust_threshold: HermesTrustThreshold {
             numerator: "1",
             denominator: "3",
@@ -84,17 +87,14 @@ fn ensure_local_key_in_hermes_keyring(
         return Ok(());
     }
 
-    let mnemonic = config::load_demo_mnemonic(project_root_path, config::LOCAL_RELAYER_MNEMONIC_ACCOUNT)?;
+    let mnemonic =
+        config::load_demo_mnemonic(project_root_path, config::LOCAL_RELAYER_MNEMONIC_ACCOUNT)?;
     let mnemonic_file = write_temp_mnemonic_file("cheqd-local-relayer", mnemonic)?;
     let mnemonic_arg = mnemonic_file.to_string_lossy().to_string();
-    let hermes_binary_str = hermes_binary
-        .to_str()
-        .ok_or_else(|| format!("Invalid Hermes binary path: {}", hermes_binary.display()))?;
-
-    let add_key_result = execute_script(
+    let add_key_result = run_hermes_output(
+        hermes_binary.as_path(),
         cheqd_dir,
-        hermes_binary_str,
-        Vec::from([
+        &[
             "keys",
             "add",
             "--overwrite",
@@ -102,8 +102,7 @@ fn ensure_local_key_in_hermes_keyring(
             config::LOCAL_CHAIN_ID,
             "--mnemonic-file",
             mnemonic_arg.as_str(),
-        ]),
-        None,
+        ],
     );
     let _ = fs::remove_file(mnemonic_file.as_path());
     add_key_result?;
@@ -116,10 +115,11 @@ fn chain_has_any_keys(
     working_dir: &Path,
     chain_id: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let output = Command::new(hermes_binary)
-        .current_dir(working_dir)
-        .args(["keys", "list", "--chain", chain_id])
-        .output()?;
+    let output = run_hermes_output(
+        hermes_binary,
+        working_dir,
+        &["keys", "list", "--chain", chain_id],
+    )?;
     if !output.status.success() {
         return Ok(false);
     }
@@ -141,7 +141,9 @@ fn resolve_local_hermes_binary(
     hermes_support::resolve_local_hermes_binary(project_root_path, cheqd_dir).ok_or_else(|| {
         format!(
             "Local Hermes binary not found. Expected {}",
-            project_root_path.join("relayer/target/release/hermes").display()
+            project_root_path
+                .join("relayer/target/release/hermes")
+                .display()
         )
         .into()
     })
@@ -152,4 +154,14 @@ fn write_temp_mnemonic_file(
     mnemonic: String,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
     hermes_support::write_temp_mnemonic_file(prefix, mnemonic)
+}
+
+fn run_hermes_output(
+    hermes_binary: &Path,
+    working_dir: &Path,
+    args: &[&str],
+) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+    HermesCli::new(hermes_binary)
+        .output(Some(working_dir), args)
+        .map_err(Into::into)
 }

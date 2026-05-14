@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 use std::thread;
 use std::time::Duration;
 
@@ -9,10 +9,12 @@ use serde_json::Value;
 use super::config;
 use crate::chains::hermes_support;
 use crate::chains::hermes_support::{
-    HermesAddressType, HermesCosmosChainProfile, HermesGasPrice, HermesTrustThreshold,
+    HermesAddressType, HermesCosmosChainProfile, HermesEventSource, HermesGasPrice,
+    HermesTrustThreshold,
 };
 use crate::logger::{log, verbose};
-use crate::utils::{execute_script, extract_tendermint_connection_id, parse_tendermint_client_id};
+use crate::process::hermes::HermesCli;
+use crate::utils::{extract_tendermint_connection_id, parse_tendermint_client_id};
 
 const INJECTIVE_ETH_HD_PATH: &str = "m/44'/60'/0'/0/0";
 const INJECTIVE_ETH_PUBKEY_TYPE: &str = "/injective.crypto.v1beta1.ethsecp256k1.PubKey";
@@ -129,8 +131,7 @@ fn configure_hermes_for_demo_chain(
                 .into())
             }
         };
-        let mnemonic_file =
-            write_temp_mnemonic_file("injective-relayer", injective_mnemonic)?;
+        let mnemonic_file = write_temp_mnemonic_file("injective-relayer", injective_mnemonic)?;
         let mnemonic_arg = mnemonic_file.to_string_lossy().to_string();
         let injective_key_result = add_hermes_key(
             injective_dir,
@@ -164,9 +165,10 @@ fn configure_hermes_for_demo_chain(
         Some("86000s"),
     )?;
 
-    let create_connection_output = Command::new(&hermes_binary)
-        .current_dir(injective_dir)
-        .args([
+    let create_connection_output = run_hermes_output(
+        hermes_binary.as_path(),
+        injective_dir,
+        &[
             "create",
             "connection",
             "--a-chain",
@@ -175,8 +177,8 @@ fn configure_hermes_for_demo_chain(
             entrypoint_client_id.as_str(),
             "--b-client",
             injective_client_id.as_str(),
-        ])
-        .output()?;
+        ],
+    )?;
     if !create_connection_output.status.success() {
         return Err(format!(
             "Failed to create Entrypoint↔Injective connection for chain {}:\n{}",
@@ -188,9 +190,10 @@ fn configure_hermes_for_demo_chain(
     let connection_id = extract_tendermint_connection_id(create_connection_output)
         .ok_or("Failed to parse connection id from Hermes output")?;
 
-    let create_channel_output = Command::new(&hermes_binary)
-        .current_dir(injective_dir)
-        .args([
+    let create_channel_output = run_hermes_output(
+        hermes_binary.as_path(),
+        injective_dir,
+        &[
             "create",
             "channel",
             "--a-chain",
@@ -201,8 +204,8 @@ fn configure_hermes_for_demo_chain(
             "transfer",
             "--b-port",
             "transfer",
-        ])
-        .output()?;
+        ],
+    )?;
     if !create_channel_output.status.success() {
         return Err(format!(
             "Failed to create Entrypoint↔Injective transfer channel for chain {}:\n{}",
@@ -233,7 +236,9 @@ fn add_hermes_key(
     }
     args.extend(["--mnemonic-file", mnemonic_file]);
 
-    execute_script(working_dir, hermes_binary, args, None)?;
+    HermesCli::new(Path::new(hermes_binary))
+        .output(Some(working_dir), args.as_slice())
+        .map_err(|error| -> Box<dyn std::error::Error> { error.into() })?;
     Ok(())
 }
 
@@ -242,10 +247,11 @@ fn chain_has_any_keys(
     working_dir: &Path,
     chain_id: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let output = Command::new(hermes_binary)
-        .current_dir(working_dir)
-        .args(["keys", "list", "--chain", chain_id])
-        .output()?;
+    let output = run_hermes_output(
+        hermes_binary,
+        working_dir,
+        &["keys", "list", "--chain", chain_id],
+    )?;
     if !output.status.success() {
         return Ok(false);
     }
@@ -287,10 +293,7 @@ fn create_client_with_retry(
             args.push(trusting_period);
         }
 
-        let output: Output = Command::new(hermes_binary)
-            .current_dir(working_dir)
-            .args(args.as_slice())
-            .output()?;
+        let output: Output = run_hermes_output(hermes_binary, working_dir, args.as_slice())?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         if output.status.success() {
@@ -340,9 +343,10 @@ fn has_open_transfer_channel(
     chain_id: &str,
     counterparty_chain_id: &str,
 ) -> Result<bool, Box<dyn std::error::Error>> {
-    let output = Command::new(hermes_binary)
-        .current_dir(working_dir)
-        .args([
+    let output = run_hermes_output(
+        hermes_binary,
+        working_dir,
+        &[
             "--json",
             "query",
             "channels",
@@ -350,8 +354,8 @@ fn has_open_transfer_channel(
             chain_id,
             "--counterparty-chain",
             counterparty_chain_id,
-        ])
-        .output()?;
+        ],
+    )?;
 
     if !output.status.success() {
         verbose(&format!(
@@ -423,15 +427,15 @@ fn resolve_local_hermes_binary(
     project_root_path: &Path,
     injective_dir: &Path,
 ) -> Result<std::path::PathBuf, Box<dyn std::error::Error>> {
-    hermes_support::resolve_local_hermes_binary(project_root_path, injective_dir).ok_or_else(
-        || {
-            format!(
-                "Local Hermes binary not found. Expected {}",
-                project_root_path.join("relayer/target/release/hermes").display()
-            )
-            .into()
-        },
-    )
+    hermes_support::resolve_local_hermes_binary(project_root_path, injective_dir).ok_or_else(|| {
+        format!(
+            "Local Hermes binary not found. Expected {}",
+            project_root_path
+                .join("relayer/target/release/hermes")
+                .display()
+        )
+        .into()
+    })
 }
 
 fn write_temp_mnemonic_file(
@@ -454,13 +458,18 @@ fn ensure_chain_in_hermes_config(
     )
 }
 
-fn profile_for_chain(chain_id: &str) -> Result<HermesCosmosChainProfile, Box<dyn std::error::Error>> {
+fn profile_for_chain(
+    chain_id: &str,
+) -> Result<HermesCosmosChainProfile, Box<dyn std::error::Error>> {
     match chain_id {
         config::LOCAL_CHAIN_ID => Ok(HermesCosmosChainProfile {
             id: config::LOCAL_CHAIN_ID.to_string(),
             rpc_addr: format!("http://127.0.0.1:{}", config::LOCAL_RPC_PORT),
             grpc_addr: format!("http://127.0.0.1:{}", config::LOCAL_GRPC_PORT),
-            event_source_url: format!("ws://127.0.0.1:{}/websocket", config::LOCAL_RPC_PORT),
+            event_source: HermesEventSource::Push {
+                url: format!("ws://127.0.0.1:{}/websocket", config::LOCAL_RPC_PORT),
+                batch_delay: "200ms",
+            },
             rpc_timeout: "10s",
             trusted_node: Some(true),
             account_prefix: "inj",
@@ -481,7 +490,7 @@ fn profile_for_chain(chain_id: &str) -> Result<HermesCosmosChainProfile, Box<dyn
             clock_drift: "20s",
             max_block_time: "10s",
             trusting_period: "10days",
-            memo_prefix: Some("Caribic"),
+            memo_prefix: Some("Cardano IBC Relayer"),
             trust_threshold: HermesTrustThreshold {
                 numerator: "1",
                 denominator: "3",
@@ -490,9 +499,11 @@ fn profile_for_chain(chain_id: &str) -> Result<HermesCosmosChainProfile, Box<dyn
         }),
         config::TESTNET_CHAIN_ID => Ok(HermesCosmosChainProfile {
             id: config::TESTNET_CHAIN_ID.to_string(),
-            rpc_addr: format!("http://127.0.0.1:{}", config::TESTNET_RPC_PORT),
-            grpc_addr: format!("http://127.0.0.1:{}", config::TESTNET_GRPC_PORT),
-            event_source_url: format!("ws://127.0.0.1:{}/websocket", config::TESTNET_RPC_PORT),
+            // Injective testnet is consumed through public endpoints rather than a locally
+            // bootstrapped full node, mirroring the existing Osmosis testnet model.
+            rpc_addr: config::TESTNET_RPC_URL.to_string(),
+            grpc_addr: config::TESTNET_GRPC_URL.to_string(),
+            event_source: HermesEventSource::Pull { interval: "2s" },
             rpc_timeout: "10s",
             trusted_node: Some(true),
             account_prefix: "inj",
@@ -504,7 +515,9 @@ fn profile_for_chain(chain_id: &str) -> Result<HermesCosmosChainProfile, Box<dyn
             default_gas: 5_000_000,
             max_gas: 9_000_000,
             gas_price: HermesGasPrice {
-                price: "0.025",
+                // Injective testnet validators enforce a high min gas price in base units.
+                // Current effective floor observed from testnet rejection responses is 500,000,000inj.
+                price: "500000000",
                 denom: "inj",
             },
             gas_multiplier: "1.8",
@@ -513,7 +526,7 @@ fn profile_for_chain(chain_id: &str) -> Result<HermesCosmosChainProfile, Box<dyn
             clock_drift: "20s",
             max_block_time: "10s",
             trusting_period: "10days",
-            memo_prefix: Some("Caribic"),
+            memo_prefix: Some("Cardano IBC Relayer"),
             trust_threshold: HermesTrustThreshold {
                 numerator: "1",
                 denominator: "3",
@@ -526,4 +539,14 @@ fn profile_for_chain(chain_id: &str) -> Result<HermesCosmosChainProfile, Box<dyn
         )
         .into()),
     }
+}
+
+fn run_hermes_output(
+    hermes_binary: &Path,
+    working_dir: &Path,
+    args: &[&str],
+) -> Result<Output, Box<dyn std::error::Error>> {
+    HermesCli::new(hermes_binary)
+        .output(Some(working_dir), args)
+        .map_err(Into::into)
 }

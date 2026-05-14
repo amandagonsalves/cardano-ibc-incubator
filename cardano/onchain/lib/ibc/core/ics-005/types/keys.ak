@@ -22,9 +22,12 @@ pub fn format_port_identifier(port_number: Int) -> ByteArray {
 /// For now we support:
 /// - legacy numeric port IDs: "port-{n}" -> "{n}"
 /// - canonical transfer port: "transfer" -> "100" (matches deployment TRANSFER_MODULE_PORT)
+/// - canonical async-icq host port: "icqhost" -> "101" (matches deployment ICQ_MODULE_PORT)
 pub fn parse_port_id_number(port_id: ByteArray) -> ByteArray {
   if port_id == "transfer" {
     "100"
+  } else if port_id == "icqhost" {
+    "101"
   } else if bytearray.take(port_id, port_prefix_with_separator_len) == port_prefix_with_separator {
     bytearray.drop(port_id, port_prefix_with_separator_len)
   } else {
@@ -54,19 +57,8 @@ pub fn is_valid_port_id(port_id: ByteArray) -> Bool {
 
 fn is_valid_port_char(byte: Int) -> Bool {
   // 0-9
-  (byte >= 0x30 && byte <= 0x39)
-    // A-Z
-    || (byte >= 0x41 && byte <= 0x5a)
-    // a-z
-    || (byte >= 0x61 && byte <= 0x7a)
-    // Allowed punctuation: _ . + - # [ ] < >
-    || byte == 0x5f
-    || byte == 0x2e
-    || byte == 0x2b
-    || byte == 0x2d
-    || byte == 0x23
-    || byte == 0x5b
-    || byte == 0x5d
-    || byte == 0x3c
-    || byte == 0x3e
+  byte >= 0x30 && byte <= 0x39 || // A-Z
+  byte >= 0x41 && byte <= 0x5a || // a-z
+  byte >= 0x61 && byte <= 0x7a || // Allowed punctuation: _ . + - # [ ] < >
+  byte == 0x5f || byte == 0x2e || byte == 0x2b || byte == 0x2d || byte == 0x23 || byte == 0x5b || byte == 0x5d || byte == 0x3c || byte == 0x3e
 }

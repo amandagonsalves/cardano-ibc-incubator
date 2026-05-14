@@ -1,6 +1,10 @@
 import { Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { convertHex2String, convertString2Hex, hashSHA256, hashSha3_256 } from '@shared/helpers/hex';
+import { convertHex2String, convertString2Hex, hashSHA256 } from '@shared/helpers/hex';
+import {
+  buildVoucherDenomHashFromFullDenom,
+  buildVoucherUserTokenNameFromDenomHash,
+} from '@shared/helpers/voucher-asset';
 import { DenomTraceService } from '../../query/services/denom-trace.service';
 import { LucidService } from '../../shared/modules/lucid/lucid.service';
 import { PacketService } from '../packet.service';
@@ -9,23 +13,23 @@ jest.mock('../../shared/types/connection/verify-proof-redeemer', () => ({
   encodeVerifyProofRedeemer: jest.fn(() => 'encoded-verify-proof-redeemer'),
 }));
 
-describe('PacketService denom regression coverage', () => {
-  const existingTraceRegistryProof = {
-    kind: 'existing' as const,
-    traceRegistryDirectoryUtxo: {
-      txHash: 'trace-directory',
-      outputIndex: 0,
-      assets: { tracedir: 1n },
+const existingTraceRegistryProof = {
+  kind: 'existing' as const,
+  traceRegistryDirectoryUtxo: {
+    txHash: 'trace-directory',
+    outputIndex: 0,
+    assets: { tracedir: 1n },
+  },
+  traceRegistryShardWitnessUtxos: [
+    {
+      txHash: 'trace-shard',
+      outputIndex: 1,
+      assets: { traceshard: 1n },
     },
-    traceRegistryShardWitnessUtxos: [
-      {
-        txHash: 'trace-shard',
-        outputIndex: 1,
-        assets: { traceshard: 1n },
-      },
-    ],
-  };
+  ],
+};
 
+describe('PacketService denom regression coverage', () => {
   it('resolves ibc/<hash> to canonical denom and uses burn path packet/module denoms', async () => {
     const loggerMock = {
       log: jest.fn(),
@@ -49,6 +53,15 @@ describe('PacketService denom regression coverage', () => {
             },
             mintVoucher: {
               scriptHash: 'mint-voucher-policy-id',
+            },
+            mintTransferEscrowShard: {
+              scriptHash: 'mint-transfer-escrow-shard-policy-id',
+            },
+            mintPort: {
+              scriptHash: 'mint-port-policy-id',
+            },
+            voucherMetadata: {
+              address: 'addr_test1vouchermetadata',
             },
           },
           modules: {
@@ -85,6 +98,7 @@ describe('PacketService denom regression coverage', () => {
       lucidServiceMock as unknown as LucidService,
       denomTraceServiceMock as unknown as DenomTraceService,
       {} as any,
+      { executePacket: jest.fn() } as any,
     );
 
     jest.spyOn(service as any, 'buildHostStateUpdateForHandlePacket').mockResolvedValue({
@@ -138,7 +152,9 @@ describe('PacketService denom regression coverage', () => {
       base_denom: 'factory/osmo1abcd/mytoken',
     });
 
-    const voucherTokenName = hashSha3_256(convertString2Hex(canonicalDenom));
+    const voucherTokenName = buildVoucherUserTokenNameFromDenomHash(
+      buildVoucherDenomHashFromFullDenom(canonicalDenom),
+    );
     const voucherTokenUnit = `mint-voucher-policy-id${voucherTokenName}`;
     const senderVoucherUtxo = {
       txHash: 'sender-voucher-utxo',
@@ -199,8 +215,10 @@ describe('PacketService denom regression coverage', () => {
       transferModuleCall?.[0]?.Operator?.[0]?.TransferModuleOperator?.[0]?.Transfer?.data?.denom;
     expect(transferModuleDenomHex).toBe(convertString2Hex(canonicalDenom));
   });
+});
 
-  it('uses sha3_256(data.denom) for acknowledgement-error refund voucher minting', async () => {
+describe('PacketService acknowledgement and recv denom regression coverage', () => {
+  it('uses the labeled blake2b_224 voucher token name for acknowledgement-error refund voucher minting', async () => {
     const loggerMock = {
       log: jest.fn(),
       warn: jest.fn(),
@@ -226,10 +244,20 @@ describe('PacketService denom regression coverage', () => {
             mintVoucher: {
               scriptHash: 'mint-voucher-policy-id',
             },
+            mintTransferEscrowShard: {
+              scriptHash: 'mint-transfer-escrow-shard-policy-id',
+            },
+            mintPort: {
+              scriptHash: 'mint-port-policy-id',
+            },
+            voucherMetadata: {
+              address: 'addr_test1vouchermetadata',
+            },
           },
           modules: {
             transfer: {
               identifier: 'transfer-module-identifier',
+              address: 'addr_test1transfermodule',
             },
           },
         };
@@ -241,6 +269,16 @@ describe('PacketService denom regression coverage', () => {
       getConnectionTokenUnit: jest.fn().mockReturnValue(['connection-policy-id', 'connection-token-name']),
       getClientTokenUnit: jest.fn().mockReturnValue('client-token-unit'),
       findUtxoByUnit: jest.fn(),
+      findUtxoAt: jest.fn().mockResolvedValue([
+        {
+          txHash: 'transfer-escrow',
+          outputIndex: 0,
+          datum: 'encoded',
+          assets: {
+            lovelace: 10n,
+          },
+        },
+      ]),
       decodeDatum: jest.fn(),
       encode: jest.fn().mockResolvedValue('encoded'),
       credentialToAddress: jest.fn().mockReturnValue('addr_test1senderresolved'),
@@ -261,6 +299,7 @@ describe('PacketService denom regression coverage', () => {
       lucidServiceMock as unknown as LucidService,
       denomTraceServiceMock as unknown as DenomTraceService,
       {} as any,
+      { executePacket: jest.fn() } as any,
     );
 
     jest.spyOn(service as any, 'refreshWalletContext').mockResolvedValue(undefined);
@@ -306,8 +345,9 @@ describe('PacketService denom regression coverage', () => {
       state: {
         clientState: {
           chainId: '',
+          latestHeight: { revisionNumber: 0n, revisionHeight: 44n },
         },
-        consensusStates: new Map([[proofHeight, { timestamp: 0n }]]),
+        consensusStates: new Map([[proofHeight, { timestamp: 0n, root: { hash: 'consensus-root' } }]]),
       },
     };
 
@@ -332,7 +372,7 @@ describe('PacketService denom regression coverage', () => {
       memo: '',
     };
 
-    const result = await service.buildUnsignedAcknowlegementPacketTx(
+    await service.buildUnsignedAcknowlegementPacketTx(
       {
         channelId: 'channel-7',
         packetSequence,
@@ -349,8 +389,11 @@ describe('PacketService denom regression coverage', () => {
       'addr_test1operator',
     );
 
-    const expectedTokenName = hashSha3_256(convertString2Hex(canonicalDenom));
-    const expectedDoublePrefixed = hashSha3_256(convertString2Hex(`transfer/channel-7/${canonicalDenom}`));
+    const expectedVoucherDenomHash = buildVoucherDenomHashFromFullDenom(canonicalDenom);
+    const expectedTokenName = buildVoucherUserTokenNameFromDenomHash(expectedVoucherDenomHash);
+    const expectedDoublePrefixed = buildVoucherUserTokenNameFromDenomHash(
+      buildVoucherDenomHashFromFullDenom(`transfer/channel-7/${canonicalDenom}`),
+    );
     expect(expectedTokenName).not.toBe(expectedDoublePrefixed);
 
     expect(lucidServiceMock.createUnsignedAckPacketMintTx).toHaveBeenCalledWith(
@@ -364,7 +407,7 @@ describe('PacketService denom regression coverage', () => {
     expect(lucidServiceMock.createUnsignedAckPacketSucceedTx).not.toHaveBeenCalled();
 
     expect(denomTraceServiceMock.prepareOnChainInsert).toHaveBeenCalledWith(
-      expectedTokenName,
+      expectedVoucherDenomHash,
       canonicalDenom,
     );
   });
@@ -395,10 +438,20 @@ describe('PacketService denom regression coverage', () => {
             mintVoucher: {
               scriptHash: 'mint-voucher-policy-id',
             },
+            mintTransferEscrowShard: {
+              scriptHash: 'mint-transfer-escrow-shard-policy-id',
+            },
+            mintPort: {
+              scriptHash: 'mint-port-policy-id',
+            },
+            voucherMetadata: {
+              address: 'addr_test1vouchermetadata',
+            },
           },
           modules: {
             transfer: {
               identifier: 'transfer-module-identifier',
+              address: 'addr_test1transfermodule',
             },
           },
         };
@@ -410,6 +463,16 @@ describe('PacketService denom regression coverage', () => {
       getConnectionTokenUnit: jest.fn().mockReturnValue(['connection-policy-id', 'connection-token-name']),
       getClientTokenUnit: jest.fn().mockReturnValue('client-token-unit'),
       findUtxoByUnit: jest.fn(),
+      findUtxoAt: jest.fn().mockResolvedValue([
+        {
+          txHash: 'transfer-escrow',
+          outputIndex: 0,
+          datum: 'encoded',
+          assets: {
+            lovelace: 10n,
+          },
+        },
+      ]),
       decodeDatum: jest.fn(),
       encode: jest.fn().mockResolvedValue('encoded'),
       credentialToAddress: jest.fn().mockReturnValue('addr_test1senderresolved'),
@@ -430,6 +493,7 @@ describe('PacketService denom regression coverage', () => {
       lucidServiceMock as unknown as LucidService,
       denomTraceServiceMock as unknown as DenomTraceService,
       {} as any,
+      { executePacket: jest.fn() } as any,
     );
 
     const refreshWalletContextSpy = jest.spyOn(service as any, 'refreshWalletContext').mockResolvedValue(undefined);
@@ -475,8 +539,9 @@ describe('PacketService denom regression coverage', () => {
       state: {
         clientState: {
           chainId: '',
+          latestHeight: { revisionNumber: 0n, revisionHeight: 44n },
         },
-        consensusStates: new Map([[proofHeight, { timestamp: 0n }]]),
+        consensusStates: new Map([[proofHeight, { timestamp: 0n, root: { hash: 'consensus-root' } }]]),
       },
     };
 
@@ -484,7 +549,15 @@ describe('PacketService denom regression coverage', () => {
       .mockResolvedValueOnce({ txHash: 'channel', outputIndex: 0, datum: 'channel-datum', assets: {} })
       .mockResolvedValueOnce({ txHash: 'connection', outputIndex: 0, datum: 'connection-datum', assets: {} })
       .mockResolvedValueOnce({ txHash: 'client', outputIndex: 0, datum: 'client-datum', assets: {} })
-      .mockResolvedValueOnce({ txHash: 'transfer', outputIndex: 0, datum: 'transfer-datum', assets: {} });
+      .mockImplementationOnce(async (shardTokenUnit: string) => ({
+        txHash: 'transfer-escrow',
+        outputIndex: 0,
+        datum: 'encoded',
+        assets: {
+          lovelace: 10n,
+          [shardTokenUnit]: 1n,
+        },
+      }));
     lucidServiceMock.decodeDatum.mockImplementation((_datum: string, type: string) => {
       if (type === 'channel') return channelDatum;
       if (type === 'connection') return connectionDatum;
@@ -520,6 +593,10 @@ describe('PacketService denom regression coverage', () => {
     expect(lucidServiceMock.createUnsignedAckPacketUnescrowTx).toHaveBeenCalledWith(
       expect.objectContaining({
         denomToken: 'lovelace',
+        transferEscrowUtxo: expect.objectContaining({
+          txHash: 'transfer-escrow',
+        }),
+        encodedTransferEscrowDatum: 'encoded',
       }),
     );
     expect(result.walletSelection).toEqual({
@@ -545,17 +622,30 @@ describe('PacketService denom regression coverage', () => {
         return {
           validators: {
             spendChannel: {
+              address: 'addr_test1spendchannel',
               refValidator: {
                 recv_packet: {
                   scriptHash: 'recv-packet-policy-id',
                 },
               },
             },
+            hostStateStt: {
+              address: 'addr_test1hoststate',
+            },
             verifyProof: {
               scriptHash: 'verify-proof-policy-id',
             },
             mintVoucher: {
               scriptHash: 'mint-voucher-policy-id',
+            },
+            mintTransferEscrowShard: {
+              scriptHash: 'mint-transfer-escrow-shard-policy-id',
+            },
+            mintPort: {
+              scriptHash: 'mint-port-policy-id',
+            },
+            voucherMetadata: {
+              address: 'addr_test1vouchermetadata',
             },
           },
           modules: {
@@ -573,6 +663,16 @@ describe('PacketService denom regression coverage', () => {
       getConnectionTokenUnit: jest.fn().mockReturnValue(['connection-policy-id', 'connection-token-name']),
       getClientTokenUnit: jest.fn().mockReturnValue('client-token-unit'),
       findUtxoByUnit: jest.fn(),
+      findUtxoAt: jest.fn().mockResolvedValue([
+        {
+          txHash: 'transfer-escrow',
+          outputIndex: 0,
+          datum: 'encoded',
+          assets: {
+            lovelace: 10n,
+          },
+        },
+      ]),
       decodeDatum: jest.fn(),
       encode: jest.fn().mockResolvedValue('encoded'),
       credentialToAddress: jest.fn().mockReturnValue('addr_test1receiverresolved'),
@@ -593,6 +693,7 @@ describe('PacketService denom regression coverage', () => {
       lucidServiceMock as unknown as LucidService,
       denomTraceServiceMock as unknown as DenomTraceService,
       {} as any,
+      { executePacket: jest.fn() } as any,
     );
 
     jest.spyOn(service as any, 'buildHostStateUpdateForHandlePacket').mockResolvedValue({
@@ -640,24 +741,24 @@ describe('PacketService denom regression coverage', () => {
       state: {
         clientState: {
           chainId: '',
+          latestHeight: { revisionNumber: 0n, revisionHeight: 44n },
         },
-        consensusStates: new Map([[proofHeight, { timestamp: 0n }]]),
+        consensusStates: new Map([[proofHeight, { timestamp: 0n, root: { hash: 'consensus-root' } }]]),
       },
     };
-    const transferModuleUtxo = {
-      txHash: 'transfer',
-      outputIndex: 0,
-      datum: 'transfer-datum',
-      assets: {
-        lovelace: 3_000_000n,
-      },
-    };
-
     lucidServiceMock.findUtxoByUnit
       .mockResolvedValueOnce({ txHash: 'channel', outputIndex: 0, datum: 'channel-datum', assets: {} })
       .mockResolvedValueOnce({ txHash: 'connection', outputIndex: 0, datum: 'connection-datum', assets: {} })
       .mockResolvedValueOnce({ txHash: 'client', outputIndex: 0, datum: 'client-datum', assets: {} })
-      .mockResolvedValueOnce(transferModuleUtxo);
+      .mockImplementationOnce(async (shardTokenUnit: string) => ({
+        txHash: 'transfer-escrow',
+        outputIndex: 0,
+        datum: 'encoded',
+        assets: {
+          lovelace: 10n,
+          [shardTokenUnit]: 1n,
+        },
+      }));
     lucidServiceMock.decodeDatum.mockImplementation((_datum: string, type: string) => {
       if (type === 'channel') return channelDatum;
       if (type === 'connection') return connectionDatum;
@@ -693,6 +794,10 @@ describe('PacketService denom regression coverage', () => {
     expect(lucidServiceMock.createUnsignedRecvPacketUnescrowTx).toHaveBeenCalledWith(
       expect.objectContaining({
         denomToken: 'lovelace',
+        transferEscrowUtxo: expect.objectContaining({
+          txHash: 'transfer-escrow',
+        }),
+        encodedTransferEscrowDatum: 'encoded',
       }),
     );
     expect(lucidServiceMock.createUnsignedRecvPacketMintTx).not.toHaveBeenCalled();

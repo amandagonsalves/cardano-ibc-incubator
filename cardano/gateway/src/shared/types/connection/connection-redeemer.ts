@@ -1,26 +1,17 @@
-import { AuthToken } from '../auth-token';
 import { Height } from '../height';
 import { MerkleProof } from '../isc-23/merkle';
-import { MithrilClientState } from '../mithril';
 import {
-  createAuthTokenSchema,
   createHeightSchema,
   createIcs23MerkleProofSchema,
-  createMithrilClientStateSchema,
 } from '../schema-fragments';
 
 type LucidData = typeof import('@lucid-evolution/lucid').Data;
 
 export type MintConnectionRedeemer =
-  | {
-      ConnOpenInit: {
-        handler_auth_token: AuthToken;
-      };
-    }
+  | 'ConnOpenInit'
   | {
       ConnOpenTry: {
-        handler_auth_token: AuthToken;
-        client_state: MithrilClientState;
+        client_state: string;
         proof_init: MerkleProof;
         proof_client: MerkleProof;
         proof_height: Height;
@@ -28,14 +19,7 @@ export type MintConnectionRedeemer =
     };
 
 export type SpendConnectionRedeemer =
-  | {
-      ConnOpenAck: {
-        counterparty_client_state: MithrilClientState;
-        proof_try: MerkleProof;
-        proof_client: MerkleProof;
-        proof_height: Height;
-      };
-    }
+  | 'ConnOpenAck'
   | {
       ConnOpenConfirm: {
         proof_ack: MerkleProof;
@@ -44,21 +28,14 @@ export type SpendConnectionRedeemer =
     };
 
 function buildMintConnectionRedeemerSchema(Data: LucidData) {
-  const AuthTokenSchema = createAuthTokenSchema(Data);
   const HeightSchema = createHeightSchema(Data);
-  const MithrilClientStateSchema = createMithrilClientStateSchema(Data);
   const { MerkleProofSchema } = createIcs23MerkleProofSchema(Data);
 
   return Data.Enum([
-    Data.Object({
-      ConnOpenInit: Data.Object({
-        handler_auth_token: AuthTokenSchema,
-      }),
-    }),
+    Data.Literal('ConnOpenInit'),
     Data.Object({
       ConnOpenTry: Data.Object({
-        handler_auth_token: AuthTokenSchema,
-        client_state: MithrilClientStateSchema,
+        client_state: Data.Bytes(),
         proof_init: MerkleProofSchema,
         proof_client: MerkleProofSchema,
         proof_height: HeightSchema,
@@ -69,18 +46,10 @@ function buildMintConnectionRedeemerSchema(Data: LucidData) {
 
 function buildSpendConnectionRedeemerSchema(Data: LucidData) {
   const HeightSchema = createHeightSchema(Data);
-  const MithrilClientStateSchema = createMithrilClientStateSchema(Data);
   const { MerkleProofSchema } = createIcs23MerkleProofSchema(Data);
 
   return Data.Enum([
-    Data.Object({
-      ConnOpenAck: Data.Object({
-        counterparty_client_state: MithrilClientStateSchema,
-        proof_try: MerkleProofSchema,
-        proof_client: MerkleProofSchema,
-        proof_height: HeightSchema,
-      }),
-    }),
+    Data.Literal('ConnOpenAck'),
     Data.Object({
       ConnOpenConfirm: Data.Object({
         proof_ack: MerkleProofSchema,

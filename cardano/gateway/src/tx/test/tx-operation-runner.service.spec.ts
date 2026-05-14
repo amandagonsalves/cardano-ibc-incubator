@@ -216,4 +216,141 @@ describe('TxOperationRunnerService', () => {
       }),
     ).rejects.toBe(expectedError);
   });
+
+  it('rebuilds a fresh unsigned tx for retry attempts when configured', async () => {
+    const { service, lucidService } = makeService();
+
+    const transientError = new Error('kupmios transport error');
+    const completedTx = {
+      toCBOR: jest.fn().mockReturnValue('84a30081825820deadbeef'),
+      toHash: jest.fn().mockReturnValue('txhash-connection-open-ack'),
+    };
+
+    const txBuilderFirst = {
+      complete: jest.fn().mockRejectedValue(transientError),
+    } as any;
+    const txBuilderSecond = {
+      complete: jest.fn().mockResolvedValue(completedTx),
+    } as any;
+    const rebuildUnsignedTx = jest.fn().mockResolvedValue(txBuilderSecond);
+    const validityApply = jest.fn().mockImplementation((builder) => builder);
+
+    const result = await service.run({
+      operationName: 'connectionOpenAck',
+      unsignedTx: txBuilderFirst,
+      rebuildUnsignedTx,
+      validity: {
+        apply: validityApply,
+      },
+      wallet: {
+        mode: 'custom_before_complete',
+        run: async () => {
+          lucidService.selectWalletFromAddress();
+        },
+      },
+      completeRetry: {
+        maxAttempts: 2,
+        isRetryable: (error) => error === transientError,
+        getDelayMs: () => 0,
+      },
+    });
+
+    expect(txBuilderFirst.complete).toHaveBeenCalledTimes(1);
+    expect(txBuilderSecond.complete).toHaveBeenCalledTimes(1);
+    expect(rebuildUnsignedTx).toHaveBeenCalledTimes(1);
+    expect(validityApply).toHaveBeenNthCalledWith(1, txBuilderFirst);
+    expect(validityApply).toHaveBeenNthCalledWith(2, txBuilderSecond);
+    expect(result.unsignedTxHash).toBe('txhash-connection-open-ack');
+  });
+
+  it('does not retry a mutable tx builder without a fresh rebuild callback', async () => {
+    const { service, lucidService } = makeService();
+
+    const retryableError = new Error('completion timeout');
+    const txBuilder = {
+      complete: jest.fn().mockRejectedValue(retryableError),
+    } as any;
+    const onRetry = jest.fn();
+
+    await expect(
+      service.run({
+        operationName: 'timeoutPacket',
+        unsignedTx: txBuilder,
+        validity: {
+          apply: () => txBuilder,
+        },
+        wallet: {
+          mode: 'custom_before_complete',
+          run: async () => {
+            lucidService.selectWalletFromAddress();
+          },
+        },
+        completeRetry: {
+          maxAttempts: 2,
+          isRetryable: () => true,
+          getDelayMs: () => 0,
+          onRetry,
+        },
+      }),
+    ).rejects.toBe(retryableError);
+
+    expect(txBuilder.complete).toHaveBeenCalledTimes(1);
+    expect(onRetry).not.toHaveBeenCalled();
+  });
+
+  it('registers the pending tree update from the successful rebuilt attempt', async () => {
+    const { service, lucidService, ibcTreePendingUpdatesService } = makeService();
+
+    const transientError = new Error('kupmios timeout');
+    const pendingTreeUpdateFirst = {
+      expectedNewRoot: 'first-root',
+      commit: jest.fn(),
+    };
+    const pendingTreeUpdateSecond = {
+      expectedNewRoot: 'second-root',
+      commit: jest.fn(),
+    };
+    let currentPendingTreeUpdate = pendingTreeUpdateFirst;
+    const completedTx = {
+      toCBOR: jest.fn().mockReturnValue('84a30081825820feedface'),
+      toHash: jest.fn().mockReturnValue('txhash-timeout-packet'),
+    };
+    const txBuilderFirst = {
+      complete: jest.fn().mockRejectedValue(transientError),
+    } as any;
+    const txBuilderSecond = {
+      complete: jest.fn().mockResolvedValue(completedTx),
+    } as any;
+    const rebuildUnsignedTx = jest.fn().mockImplementation(async () => {
+      currentPendingTreeUpdate = pendingTreeUpdateSecond;
+      return txBuilderSecond;
+    });
+
+    await service.run({
+      operationName: 'timeoutPacket',
+      unsignedTx: txBuilderFirst,
+      rebuildUnsignedTx,
+      validity: {
+        apply: (builder) => builder,
+      },
+      wallet: {
+        mode: 'custom_before_complete',
+        run: async () => {
+          lucidService.selectWalletFromAddress();
+        },
+      },
+      completeRetry: {
+        maxAttempts: 2,
+        isRetryable: (error) => error === transientError,
+        getDelayMs: () => 0,
+      },
+      pendingTreeUpdate: () => currentPendingTreeUpdate,
+    });
+
+    expect(rebuildUnsignedTx).toHaveBeenCalledTimes(1);
+    expect(ibcTreePendingUpdatesService.register).toHaveBeenCalledWith(
+      'txhash-timeout-packet',
+      pendingTreeUpdateSecond,
+    );
+  });
 });

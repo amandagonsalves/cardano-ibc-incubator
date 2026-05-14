@@ -1,5 +1,6 @@
-import { PolicyId, UTxO } from "@lucid-evolution/lucid";
-import { AuthToken } from "@shared/types/auth-token";
+import { PolicyId, UTxO } from '@lucid-evolution/lucid';
+import { AuthToken } from '@shared/types/auth-token';
+import { GatewayModuleKey } from '@shared/helpers/module-port';
 
 // Composable DTO fragments: packet DTOs are formed via intersection types (`&`)
 // so shared tx fields are defined once and reused consistently.
@@ -23,12 +24,23 @@ export type WithLegacyChannelContext = {
   clientUTxO: UTxO;
 };
 
-export type WithTransferModuleUtxo = {
-  transferModuleUtxo: UTxO;
+export type WithTransferModuleReferenceUtxo = {
+  transferModuleReferenceUtxo?: UTxO;
 };
 
-export type WithLegacyTransferModuleUtxo = {
-  transferModuleUTxO: UTxO;
+export type WithMockModuleUtxo = {
+  mockModuleUtxo: UTxO;
+};
+
+export type WithModuleContext = {
+  moduleKey: GatewayModuleKey;
+  moduleUtxo: UTxO;
+};
+
+export type WithTransferEscrowShard = {
+  transferEscrowUtxo?: UTxO;
+  encodedTransferEscrowDatum?: string;
+  transferEscrowShardTokenUnit?: string;
 };
 
 export type WithChannelSpend = {
@@ -41,8 +53,26 @@ export type WithTransferModuleSpend = {
   encodedSpendTransferModuleRedeemer: string;
 };
 
+export type WithMockModuleSpend = {
+  encodedSpendMockModuleRedeemer: string;
+};
+
+export type WithModuleSpend = {
+  encodedSpendModuleRedeemer: string;
+};
+
 export type WithMintVoucherRedeemer = {
   encodedMintVoucherRedeemer: string;
+};
+
+export type WithMintTransferEscrowShardRedeemer = {
+  encodedMintTransferEscrowShardRedeemer?: string;
+};
+
+export type WithVoucherMetadataOutput = {
+  voucherReferenceTokenUnit?: string;
+  voucherMetadataAddress?: string;
+  encodedVoucherMetadataDatum?: string;
 };
 
 export type TraceRegistryAppendUpdate = {

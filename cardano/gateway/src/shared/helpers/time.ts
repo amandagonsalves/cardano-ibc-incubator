@@ -1,67 +1,46 @@
 import WebSocket from 'ws';
+import { ogmiosRequest } from './ogmios';
+import {
+  resolveManagedOgmiosHttpEndpoint,
+  resolveManagedOgmiosWsEndpoint,
+  resolveManagedOgmiosWsOptions,
+} from './managed-cardano-endpoints';
 
 type OgmiosPoint = { slot: number; id: string };
 type SlotConfig = { zeroTime: number; zeroSlot: number; slotLength: number };
 
-const ogmiosWsp = async (ogmiosUrl: string, methodname: string, args: unknown) => {
-  const client = new WebSocket(ogmiosUrl);
-  await new Promise((res) => {
-    client.addEventListener('open', () => res(1), {
-      once: true,
-    });
-  });
-  client.send(
-    JSON.stringify({
-      jsonrpc: '2.0',
-      method: methodname,
-      params: args,
-    }),
-  );
-  return client;
-};
-
-const ogmiosRequest = async <T>(ogmiosUrl: string, methodname: string, args: unknown): Promise<T> => {
-  const client = await ogmiosWsp(ogmiosUrl, methodname, args);
-  try {
-    return await new Promise<T>((res, rej) => {
-      client.addEventListener(
-        'message',
-        (msg: MessageEvent<string>) => {
-          try {
-            const payload = JSON.parse(msg.data);
-            if (payload?.error) {
-              rej(new Error(payload.error.message ?? JSON.stringify(payload.error)));
-              return;
-            }
-            res(payload.result as T);
-          } catch (e) {
-            rej(e);
-          } finally {
-            client.close();
-          }
-        },
-        {
-          once: true,
-        },
-      );
-      client.addEventListener(
-        'error',
-        (event: ErrorEvent) => {
-          client.close();
-          rej(event.error ?? new Error('Ogmios websocket request failed'));
-        },
-        { once: true },
-      );
-    });
-  } finally {
-    if (client.readyState === WebSocket.OPEN || client.readyState === WebSocket.CONNECTING) {
-      client.close();
-    }
-  }
-};
-
 const querySystemStart = async (ogmiosUrl: string) => {
-  const systemStart = await ogmiosRequest<string>(ogmiosUrl, 'queryNetwork/startTime', {});
+  const resolvedUrl =
+    resolveManagedOgmiosHttpEndpoint(ogmiosUrl, process.env.OGMIOS_API_KEY) ?? ogmiosUrl;
+  const response = await fetch(resolvedUrl, {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      ...(process.env.OGMIOS_API_KEY
+        ? { 'dmtr-api-key': process.env.OGMIOS_API_KEY }
+        : {}),
+    },
+    body: JSON.stringify({
+      jsonrpc: '2.0',
+      id: 'queryNetwork/startTime',
+      method: 'queryNetwork/startTime',
+      params: {},
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '');
+    throw new Error(
+      `Ogmios startTime query failed with HTTP ${response.status} at ${resolvedUrl} ` +
+        `authHeader=${process.env.OGMIOS_API_KEY ? 'set' : 'missing'}${body ? `: ${body}` : ''}`,
+    );
+  }
+
+  const payload = await response.json();
+  const systemStart = payload?.result;
+  if (typeof systemStart !== 'string') {
+    throw new Error('Ogmios startTime query returned an invalid payload');
+  }
   const parsedSystemTime = Date.parse(systemStart);
 
   return parsedSystemTime;
@@ -129,7 +108,12 @@ const queryTransactionInclusionBlockHeight = async (
   fromPoint: OgmiosPoint | 'origin',
   timeoutMs: number = 60000,
 ): Promise<number> => {
-  const client = new WebSocket(ogmiosUrl);
+  const resolvedUrl =
+    resolveManagedOgmiosWsEndpoint(ogmiosUrl, process.env.OGMIOS_API_KEY) ?? ogmiosUrl;
+  const client = new WebSocket(
+    resolvedUrl,
+    resolveManagedOgmiosWsOptions(ogmiosUrl, process.env.OGMIOS_API_KEY),
+  );
   const txHashLower = txHash.toLowerCase();
   // Start from the pre-submit point when available so the inclusion scan only watches
   // the block window that could actually contain the submitted transaction.

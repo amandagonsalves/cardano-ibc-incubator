@@ -7,6 +7,17 @@ export type TransferPlanRequest = {
     fromChainId: string;
     toChainId: string;
     tokenDenom: string;
+    expectedChainPath?: string[];
+};
+export type MissingTransferRouteHop = {
+    fromChainId: string;
+    toChainId: string;
+    reason: 'no-outbound-channel' | 'no-channel-to-destination' | 'blocked-by-visited-chain';
+    availableDestChainIds: string[];
+};
+export type TransferRouteDiagnostics = {
+    expectedChainPath: string[];
+    missingHops: MissingTransferRouteHop[];
 };
 export type TransferPlanResponse = {
     foundRoute: boolean;
@@ -21,6 +32,7 @@ export type TransferPlanResponse = {
     } | null;
     failureCode?: 'invalid-request' | 'missing-unwind-hop' | 'ambiguous-unwind-hop' | 'no-forward-route' | 'ambiguous-forward-route' | 'ambiguous-forward-hop' | 'channels-not-loaded' | 'source-chain-unavailable' | 'destination-chain-unavailable' | 'no-outbound-channels' | 'no-route-found';
     failureMessage?: string;
+    routeDiagnostics?: TransferRouteDiagnostics;
 };
 export type SwapOptionToken = {
     token_id: string;
@@ -53,11 +65,19 @@ export type SwapEstimateResponse = {
 };
 export type PlannerClientConfig = {
     cardanoChainId: string;
+    cardanoRestEndpoint?: string;
     entrypointRestEndpoint: string;
     localOsmosisRestEndpoint: string;
     swapRouterAddress?: string;
+    preferredChannels?: PreferredChannel[];
     resolveCardanoAssetDenomTrace?: (assetId: string) => Promise<ResolvedCardanoAssetTrace | null>;
     fetchImpl?: typeof fetch;
+};
+export type PreferredChannel = {
+    fromChainId: string;
+    toChainId: string;
+    srcPort: string;
+    srcChannel: string;
 };
 export type PlannerClient = {
     planTransferRoute: (request: TransferPlanRequest) => Promise<TransferPlanResponse>;
