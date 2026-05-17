@@ -8,6 +8,17 @@
     "cardano-entrypoint": {
       "chain_id": "cardano-entrypoint",
       "message_port_id": "transfer"
+    },
+    "stellar-testnet": {
+      "chain_id": "stellar-testnet",
+      "message_port_id": "transfer",
+      "rpc_addr": "https://soroban-testnet.stellar.org",
+      "grpc_addr": "http://127.0.0.1:50052",
+      "key_name": "stellar-relayer",
+      "gateway_grpc_port": 50052,
+      "gateway_http_port": 8001,
+      "max_block_time": "6s",
+      "clock_drift": "5s"
     }
   },
   "mithril": {

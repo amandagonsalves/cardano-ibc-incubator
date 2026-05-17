@@ -66,12 +66,12 @@ const utxoLovelace = (utxo: UTxO): bigint => utxo.assets.lovelace ?? 0n;
 const isAdaOnlyUtxo = (utxo: UTxO): boolean =>
   Object.keys(utxo.assets).every((unit) => unit === "lovelace");
 
-const sortUtxosByLovelaceDesc = (utxos: UTxO[]): UTxO[] =>
+const sortUtxosByLovelaceAsc = (utxos: UTxO[]): UTxO[] =>
   [...utxos].sort((a, b) => {
     const aLovelace = utxoLovelace(a);
     const bLovelace = utxoLovelace(b);
     if (aLovelace === bLovelace) return 0;
-    return aLovelace < bLovelace ? 1 : -1;
+    return aLovelace < bLovelace ? -1 : 1;
   });
 
 const sortNonceCandidateUtxos = (utxos: UTxO[]): UTxO[] =>
@@ -296,7 +296,7 @@ export const createDeployment = async (
     await submitTx(
       () => {
         const splitTx = lucid.newTx().collectFrom(signerUtxos);
-        for (let index = 0; index < RESERVED_DEPLOYMENT_NONCE_COUNT; index++) {
+        for (let index = 0; index < RESERVED_DEPLOYMENT_NONCE_COUNT + 2; index++) {
           splitTx.pay.ToAddress(address, {
             lovelace: DEPLOYMENT_NONCE_SPLIT_AMOUNT,
           });
@@ -927,8 +927,8 @@ const mergeWalletUtxos = (utxos: UTxO[]): UTxO[] => {
 
 const selectDeploymentCollateralHoldback = (utxos: UTxO[]): UTxO[] => {
   const candidateGroups = [
-    sortUtxosByLovelaceDesc(utxos.filter(isAdaOnlyUtxo)),
-    sortUtxosByLovelaceDesc(utxos),
+    sortUtxosByLovelaceAsc(utxos.filter(isAdaOnlyUtxo)),
+    sortUtxosByLovelaceAsc(utxos),
   ];
 
   for (const candidates of candidateGroups) {
