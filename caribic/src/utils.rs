@@ -370,25 +370,6 @@ pub fn execute_script(
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
-pub fn execute_script_with_progress(
-    script_dir: &Path,
-    script_name: &str,
-    script_args: Vec<&str>,
-    start_message: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let mut command = Command::new(script_name);
-    command.current_dir(script_dir).args(script_args);
-
-    let output = runner::run_with_spinner(&mut command, start_message)
-        .map_err(|error| format!("Failed to initialize localnet: {}", error))?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        Err(runner::best_output_details(&output).into())
-    }
-}
-
 pub fn unzip_file(file_path: &Path, destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
     // Open the ZIP file
     let file = File::open(file_path)?;

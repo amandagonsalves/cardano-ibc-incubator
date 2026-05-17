@@ -1,10 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use dirs::home_dir;
 
 use crate::logger::verbose;
+
+const HERMES_DOCKER_IMAGE: &str = "amandagonsalvesdev/stellar-hermes-cardano:v0.1.0";
 
 pub struct HermesCosmosChainProfile {
     pub id: String,
@@ -70,21 +73,22 @@ pub fn resolve_local_hermes_binary(
     project_root_path: &Path,
     search_root: &Path,
 ) -> Option<PathBuf> {
-    let configured_candidate = project_root_path.join("relayer/target/release/hermes");
-    if configured_candidate.is_file() {
-        return Some(configured_candidate);
-    }
-
-    let mut current = Some(search_root);
-    while let Some(directory) = current {
-        let candidate = directory.join("relayer/target/release/hermes");
-        if candidate.is_file() {
-            return Some(candidate);
+    match ensure_hermes_docker_wrapper() {
+        Ok(wrapper) => {
+            verbose(&format!(
+                "Local hermes binary not found; using Docker wrapper at {}",
+                wrapper.display()
+            ));
+            Some(wrapper)
         }
-        current = directory.parent();
+        Err(e) => {
+            verbose(&format!(
+                "Docker hermes wrapper unavailable ({}); skipping hermes sync",
+                e
+            ));
+            None
+        }
     }
-
-    None
 }
 
 pub fn write_temp_mnemonic_file(
@@ -317,4 +321,157 @@ fn extract_chain_block(config: &str, target_chain_id: &str) -> Option<String> {
     let lines: Vec<&str> = config.lines().collect();
     let (block_start, block_end) = find_chain_block_bounds(&lines, target_chain_id)?;
     Some(lines[block_start..block_end].join("\n"))
+}
+
+pub struct HermesStellarChainProfile {
+    pub id: String,
+    pub rpc_addr: String,
+    pub grpc_addr: String,
+    pub key_name: String,
+    pub max_block_time: String,
+    pub clock_drift: String,
+}
+
+pub fn ensure_stellar_chain_in_hermes_config(
+    profile: &HermesStellarChainProfile,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let home_path = home_dir().ok_or("Could not determine home directory")?;
+    let hermes_dir = home_path.join(".hermes");
+    if !hermes_dir.exists() {
+        fs::create_dir_all(&hermes_dir)?;
+    }
+
+    let config_path = hermes_dir.join("config.toml");
+    if !config_path.exists() {
+        return Err(format!(
+            "Hermes config not found at {}. Run `caribic start` first.",
+            config_path.display()
+        )
+        .into());
+    }
+
+    let mut config = fs::read_to_string(&config_path)
+        .map_err(|e| format!("Failed to read {}: {}", config_path.display(), e))?;
+
+    let chain_block = render_stellar_chain_block(profile);
+    let chain_id = profile.id.as_str();
+
+    if let Some(existing_block) = extract_chain_block(&config, chain_id) {
+        if existing_block.trim() == chain_block.trim() {
+            return Ok(());
+        }
+        config = replace_chain_block(&config, chain_id, &chain_block).ok_or_else(|| {
+            format!(
+                "Failed to update chain '{}' in {}",
+                chain_id,
+                config_path.display()
+            )
+        })?;
+        fs::write(&config_path, &config)
+            .map_err(|e| format!("Failed to write {}: {}", config_path.display(), e))?;
+        verbose(&format!(
+            "Updated '{}' chain block in {}",
+            chain_id,
+            config_path.display()
+        ));
+        return Ok(());
+    }
+
+    if !config.ends_with('\n') {
+        config.push('\n');
+    }
+    config.push('\n');
+    config.push_str(&chain_block);
+    config.push('\n');
+
+    fs::write(&config_path, &config)
+        .map_err(|e| format!("Failed to write {}: {}", config_path.display(), e))?;
+    verbose(&format!(
+        "Added '{}' chain to {}",
+        chain_id,
+        config_path.display()
+    ));
+    Ok(())
+}
+
+pub fn ensure_hermes_docker_wrapper() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    pull_hermes_image_if_missing()?;
+
+    let wrapper = hermes_docker_wrapper_path();
+    if let Some(parent) = wrapper.parent() {
+        fs::create_dir_all(parent)?;
+    }
+
+    let script = format!(
+        "#!/bin/sh\nexec docker run --rm \\\n  -v \"$HOME/.hermes:/root/.hermes\" \\\n  -v \"/tmp:/tmp\" \\\n  {image} \"$@\"\n",
+        image = HERMES_DOCKER_IMAGE,
+    );
+
+    let needs_write = fs::read_to_string(&wrapper)
+        .map(|existing| existing != script)
+        .unwrap_or(true);
+
+    if needs_write {
+        fs::write(&wrapper, &script)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&wrapper, fs::Permissions::from_mode(0o755))?;
+        }
+        verbose(&format!(
+            "Wrote hermes Docker wrapper → {}",
+            wrapper.display()
+        ));
+    }
+
+    Ok(wrapper)
+}
+
+fn hermes_docker_wrapper_path() -> PathBuf {
+    home_dir()
+        .unwrap_or_else(|| PathBuf::from("/tmp"))
+        .join(".local/bin/hermes")
+}
+
+fn pull_hermes_image_if_missing() -> Result<(), Box<dyn std::error::Error>> {
+    let present = Command::new("docker")
+        .args(["image", "inspect", "--format", ".", HERMES_DOCKER_IMAGE])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+
+    if present {
+        return Ok(());
+    }
+
+    verbose(&format!("Pulling {}...", HERMES_DOCKER_IMAGE));
+
+    let status = Command::new("docker")
+        .args(["pull", HERMES_DOCKER_IMAGE])
+        .status()
+        .map_err(|e| format!("Failed to run 'docker pull': {}", e))?;
+
+    if !status.success() {
+        return Err(format!("docker pull failed for {}", HERMES_DOCKER_IMAGE).into());
+    }
+
+    Ok(())
+}
+
+fn render_stellar_chain_block(profile: &HermesStellarChainProfile) -> String {
+    let mut lines = Vec::new();
+    lines.push("[[chains]]".to_string());
+    lines.push(format!("id = '{}'", profile.id));
+    lines.push("type = 'Stellar'".to_string());
+    lines.push(format!("rpc_addr = '{}'", profile.rpc_addr));
+    lines.push(format!("grpc_addr = '{}'", profile.grpc_addr));
+    lines.push(format!("key_name = '{}'", profile.key_name));
+    lines.push("key_store_type = 'Test'".to_string());
+    lines.push(format!("max_block_time = '{}'", profile.max_block_time));
+    lines.push(format!("clock_drift = '{}'", profile.clock_drift));
+    lines.push(String::new());
+    lines.push("[chains.packet_filter]".to_string());
+    lines.push("policy = 'allow'".to_string());
+    lines.push("list = [['transfer', '*']]".to_string());
+    lines.join("\n")
 }

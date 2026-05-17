@@ -1,6 +1,4 @@
 use crate::logger;
-use indicatif::{ProgressBar, ProgressStyle};
-use std::collections::VecDeque;
 use std::io::{BufRead, BufReader};
 use std::process::{Command, Output, Stdio};
 use std::sync::mpsc;
@@ -18,17 +16,6 @@ pub struct StreamingOptions<'a> {
     pub heartbeat_interval: Option<Duration>,
     pub log_failure_output: bool,
     pub timeout: Option<Duration>,
-}
-
-impl<'a> StreamingOptions<'a> {
-    pub fn new(label: &'a str) -> Self {
-        Self {
-            label,
-            heartbeat_interval: None,
-            log_failure_output: false,
-            timeout: None,
-        }
-    }
 }
 
 pub fn run_output(command: &mut Command) -> Result<Output, String> {
@@ -219,47 +206,6 @@ where
         stdout: stdout_buf.into_bytes(),
         stderr: stderr_buf.into_bytes(),
     })
-}
-
-pub fn run_with_spinner(command: &mut Command, start_message: &str) -> Result<Output, String> {
-    let progress_bar = ProgressBar::new_spinner();
-    progress_bar.enable_steady_tick(Duration::from_millis(100));
-    progress_bar.set_style(
-        ProgressStyle::with_template("{prefix:.bold} {spinner} {wide_msg}")
-            .unwrap()
-            .tick_chars("⠁⠂⠄⡀⢀⠠⠐⠈ "),
-    );
-    progress_bar.set_prefix(start_message.to_owned());
-
-    let verbosity = logger::get_verbosity();
-    let mut last_lines = VecDeque::with_capacity(5);
-    let output = run_output_streaming(command, StreamingOptions::new(start_message), |_, line| {
-        match verbosity {
-            logger::Verbosity::Verbose => {
-                progress_bar.set_message(line.trim().to_string());
-            }
-            logger::Verbosity::Info => {
-                if last_lines.len() == 5 {
-                    last_lines.pop_front();
-                }
-                last_lines.push_back(line.to_string());
-                progress_bar.set_message(
-                    last_lines
-                        .iter()
-                        .cloned()
-                        .collect::<Vec<String>>()
-                        .join("\n"),
-                );
-            }
-            logger::Verbosity::Standard => {
-                progress_bar.set_message(line.trim().to_string());
-            }
-            _ => {}
-        }
-    });
-
-    progress_bar.finish_and_clear();
-    output
 }
 
 pub fn format_command(command: &Command) -> String {

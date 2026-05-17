@@ -10,7 +10,7 @@ use crate::setup::{
     write_cardano_runtime_selection,
 };
 use crate::utils::{
-    diagnose_container_failure, execute_script, execute_script_with_progress, get_cardano_era,
+    diagnose_container_failure, execute_script, get_cardano_era,
     get_cardano_state, get_user_ids, replace_text_in_file, wait_for_health_check, CardanoQuery,
 };
 use crate::{
@@ -28,7 +28,6 @@ use std::fs::{self, OpenOptions};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
-use std::sync::Once;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -47,8 +46,6 @@ const IBC_SWAP_DAPP_READINESS_ATTEMPTS: u32 = 60;
 const IBC_SWAP_DAPP_READINESS_INTERVAL_MILLIS: u64 = 2000;
 const YACI_HEALTH_CHECK_ATTEMPTS: u32 = 36;
 const YACI_HEALTH_CHECK_INTERVAL_MILLIS: u64 = 5000;
-static RELAYER_REMOTE_TIP_CHECK_ONCE: Once = Once::new();
-
 pub(crate) fn hermes_pid_file_path() -> Option<PathBuf> {
     home_dir().map(|home| home.join(".hermes").join(HERMES_PID_FILE_NAME))
 }
@@ -397,29 +394,27 @@ pub fn start_relayer(
         log("Configuring Hermes relayer ...");
     }
 
-    // Build Hermes with Cardano support if needed
-    let hermes_binary = relayer_path.join("target/release/hermes");
-
-    if !hermes_binary.exists() {
-        ensure_relayer_sources_available(relayer_path)?;
-        warn_if_relayer_submodule_is_not_remote_tip(relayer_path);
-        log_or_show_progress(
-            "Building Hermes with Cardano support (this may take a few minutes)...",
-            &optional_progress_bar,
-        );
-        execute_script_with_progress(
-            relayer_path,
-            "cargo",
-            Vec::from(["build", "--release", "--bin", "hermes"]),
-            "Building Hermes relayer...",
-        )?;
-    } else {
-        warn_if_relayer_submodule_is_not_remote_tip(relayer_path);
-        log_or_show_progress(
-            "Hermes binary already built, skipping compilation",
-            &optional_progress_bar,
-        );
-    }
+    // Resolve Hermes binary: prefer Docker image wrapper (supports both Cardano + Stellar),
+    // fall back to a locally-built binary only if Docker is unavailable.
+    log_or_show_progress(
+        "Setting up Hermes via Docker image (amandagonsalvesdev/stellar-hermes-cardano:v0.1.0)",
+        &optional_progress_bar,
+    );
+    let hermes_binary = match chains::hermes_support::ensure_hermes_docker_wrapper() {
+        Ok(wrapper) => wrapper,
+        Err(_) => {
+            let local = relayer_path.join("target/release/hermes");
+            if local.exists() {
+                log_or_show_progress(
+                    "Docker unavailable — falling back to local Hermes binary",
+                    &optional_progress_bar,
+                );
+                local
+            } else {
+                return Err("Hermes unavailable: Docker wrapper failed and no local binary found at relayer/target/release/hermes".into());
+            }
+        }
+    };
 
     // Set up Hermes configuration directory
     log_or_show_progress("Setting up Hermes configuration", &optional_progress_bar);
@@ -605,159 +600,8 @@ pub fn start_relayer(
     Ok(())
 }
 
-fn ensure_relayer_sources_available(relayer_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    if relayer_path.join("Cargo.toml").exists() {
-        return Ok(());
-    }
-
-    let project_root = relayer_path
-        .parent()
-        .ok_or("Failed to resolve project root from relayer path")?;
-
-    if project_root.join(".git").exists() {
-        execute_script(
-            project_root,
-            "git",
-            Vec::from(["submodule", "update", "--init", "--recursive", "relayer"]),
-            None,
-        )?;
-
-        if relayer_path.join("Cargo.toml").exists() {
-            return Ok(());
-        }
-    }
-
-    Err(format!(
-        "Hermes relayer sources are missing at {} (Cargo.toml not found). \
-Clone the repository with submodules or run `git submodule update --init --recursive relayer`.",
-        relayer_path.display()
-    )
-    .into())
-}
-
-fn run_git_stdout(current_dir: &Path, args: &[&str]) -> Result<String, String> {
-    let output = Command::new("git")
-        .current_dir(current_dir)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .args(args)
-        .output()
-        .map_err(|error| format!("failed to run `git {}`: {}", args.join(" "), error))?;
-
-    if output.status.success() {
-        return Ok(String::from_utf8_lossy(&output.stdout).trim().to_string());
-    }
-
-    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    let details = if !stderr.is_empty() { stderr } else { stdout };
-    Err(format!(
-        "`git {}` failed (exit code {}): {}",
-        args.join(" "),
-        output.status.code().unwrap_or(-1),
-        details
-    ))
-}
-
-fn short_commit(commit: &str) -> &str {
-    let length = commit.len().min(12);
-    &commit[..length]
-}
-
-fn warn_if_relayer_submodule_is_not_remote_tip(relayer_path: &Path) {
-    if !relayer_path.join("Cargo.toml").exists() {
-        verbose("Skipping Hermes relayer branch-tip check because relayer sources are missing");
-        return;
-    }
-
-    RELAYER_REMOTE_TIP_CHECK_ONCE.call_once(|| {
-        if let Err(error) = check_relayer_submodule_remote_tip(relayer_path) {
-            verbose(&format!(
-                "Skipping Hermes relayer branch-tip check: {}",
-                error
-            ));
-        }
-    });
-}
-
-fn check_relayer_submodule_remote_tip(relayer_path: &Path) -> Result<(), String> {
-    let project_root = relayer_path
-        .parent()
-        .ok_or_else(|| "failed to resolve project root from relayer path".to_string())?;
-    let branch = run_git_stdout(
-        project_root,
-        &[
-            "config",
-            "--file",
-            ".gitmodules",
-            "--get",
-            "submodule.relayer.branch",
-        ],
-    )?;
-    let remote_url = run_git_stdout(
-        project_root,
-        &[
-            "config",
-            "--file",
-            ".gitmodules",
-            "--get",
-            "submodule.relayer.url",
-        ],
-    )?;
-    let local_head = run_git_stdout(relayer_path, &["rev-parse", "HEAD"])?;
-    let remote_ref = format!("refs/heads/{branch}");
-    let remote_output = run_git_stdout(
-        project_root,
-        &[
-            "-c",
-            "http.lowSpeedLimit=1",
-            "-c",
-            "http.lowSpeedTime=5",
-            "ls-remote",
-            "--exit-code",
-            remote_url.as_str(),
-            remote_ref.as_str(),
-        ],
-    )?;
-    let remote_tip = remote_output
-        .split_whitespace()
-        .next()
-        .ok_or_else(|| format!("remote branch '{}' returned no commit", branch))?;
-
-    if local_head != remote_tip {
-        logger::warn(&format!(
-            "WARN: Hermes relayer submodule is checked out at {}, but {} is at {} on {}. \
-Startup will continue; run `git submodule update --remote relayer` if you intended to use the latest Hermes Cardano integration branch.",
-            short_commit(local_head.as_str()),
-            branch,
-            short_commit(remote_tip),
-            remote_url,
-        ));
-    }
-
-    Ok(())
-}
-
-pub fn build_hermes_if_needed(relayer_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
-    let hermes_binary = relayer_path.join("target/release/hermes");
-    if hermes_binary.exists() {
-        warn_if_relayer_submodule_is_not_remote_tip(relayer_path);
-        return Ok(());
-    }
-
-    ensure_relayer_sources_available(relayer_path)?;
-    warn_if_relayer_submodule_is_not_remote_tip(relayer_path);
-
-    // This helper intentionally does not use a progress bar because it is used by
-    // `caribic start` to build Hermes in parallel with other startup tasks.
-    //
-    // Output still becomes visible in higher verbosity modes via `execute_script`.
-    execute_script(
-        relayer_path,
-        "cargo",
-        Vec::from(["build", "--release", "--bin", "hermes"]),
-        None,
-    )?;
-
+pub fn build_hermes_if_needed(_relayer_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    chains::hermes_support::ensure_hermes_docker_wrapper()?;
     Ok(())
 }
 
@@ -3403,14 +3247,19 @@ fn run_hermes_command_with_progress_and_timeout(
 fn require_relayer_hermes_binary() -> Result<PathBuf, Box<dyn std::error::Error>> {
     let project_root = PathBuf::from(config::get_config().project_root);
     let hermes_binary = project_root.join("relayer/target/release/hermes");
-    if !hermes_binary.exists() {
-        return Err(format!(
-            "Hermes binary not found at {}. Run 'caribic start bridge' first to build it.",
-            hermes_binary.display()
-        )
-        .into());
+    if hermes_binary.exists() {
+        return Ok(hermes_binary);
     }
-    Ok(hermes_binary)
+    // Fall back to the Docker wrapper so callers can run hermes commands without
+    // a local source build.
+    chains::hermes_support::ensure_hermes_docker_wrapper().map_err(|e| {
+        format!(
+            "Hermes not available: local binary not found at {} and Docker wrapper failed: {}",
+            hermes_binary.display(),
+            e
+        )
+        .into()
+    })
 }
 
 /// Runs one Hermes command against the relayer build output.
